@@ -1,0 +1,63 @@
+{
+  "entities": {
+    "Candidate": {
+      "title": "Candidate",
+      "description": "Base information for a person who applied or worked at the company.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Full name of the candidate" },
+        "birthday": { "type": "string", "format": "date", "description": "Birthday for unique identification" },
+        "phone": { "type": "string", "description": "Contact phone number" },
+        "email": { "type": "string", "format": "email", "description": "Contact email" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "lastQueriedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "birthday"]
+    },
+    "Record": {
+      "title": "Historical Record",
+      "description": "A specific interview result or employment history entry.",
+      "type": "object",
+      "properties": {
+        "candidateId": { "type": "string", "description": "Link to Candidate ID" },
+        "type": { "type": "string", "enum": ["interview", "employment"], "description": "Type of record" },
+        "date": { "type": "string", "format": "date" },
+        "result": { "type": "string", "description": "Result (e.g. Pass, Fail, Resigned)" },
+        "reason": { "type": "string", "description": "Detailed reason for the result or leaving" },
+        "department": { "type": "string" },
+        "position": { "type": "string" },
+        "interviewer": { "type": "string" },
+        "notes": { "type": "string" },
+        "createdBy": { "type": "string", "description": "HR user UID who added this record" }
+      },
+      "required": ["candidateId", "type", "date", "result"]
+    },
+    "AccessLog": {
+      "title": "Audit Log",
+      "description": "Tracks who queried which candidate for privacy compliance.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "candidateId": { "type": "string" },
+        "candidateName": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "action": { "type": "string" }
+      }
+    }
+  },
+  "firestore": {
+    "candidates": {
+      "schema": "Candidate",
+      "description": "Main collection for candidate profiles"
+    },
+    "candidates/{candidateId}/records": {
+      "schema": "Record",
+      "description": "Sub-collection for timeline of events for a candidate"
+    },
+    "access_logs": {
+      "schema": "AccessLog",
+      "description": "Audit logs for data privacy compliance"
+    }
+  }
+}

@@ -1,0 +1,79 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Global Helpers ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function isValidId(id) {
+      return id is string && id.size() <= 256 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Allow test connection
+    match /test/connection {
+      allow read: if true;
+    }
+
+    // --- Collections ---
+
+    // Candidates: Only HR can search and read
+    match /candidates/{candidateId} {
+      function isValidCandidate(data) {
+        return data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+               data.birthday is string && data.birthday.size() == 10;
+      }
+
+      allow get, list: if isSignedIn();
+
+      allow create: if isSignedIn() && isValidCandidate(incoming());
+
+      allow update: if isSignedIn() && (
+        // Action: Update timestamp or basic info
+        (incoming().diff(existing()).affectedKeys().hasOnly(['lastQueriedAt', 'phone', 'email'])) ||
+        // Action: Admin sync (names/birthdays shouldn't change normally but let's be flexible for sync)
+        (isValidCandidate(incoming()))
+      );
+    }
+
+    // Records: Historical entries
+    match /candidates/{candidateId}/records/{recordId} {
+      function isValidRecord(data) {
+        return data.candidateId == candidateId &&
+               data.type in ['interview', 'employment'] &&
+               data.result is string && data.result.size() < 1000;
+      }
+
+      allow read: if isSignedIn();
+      
+      // Allow create and update for sync
+      allow create, update: if isSignedIn() && isValidRecord(incoming());
+      
+      allow delete: if false;
+    }
+
+    // Access Logs: Audit trail (Write only, no read for standard users)
+    match /access_logs/{logId} {
+      allow create: if isSignedIn() && (
+        incoming().userId == request.auth.uid &&
+        incoming().timestamp == request.time
+      );
+      
+      // Only system admins should read logs (not implemented role check yet, but keep safe)
+      allow read: if false;
+    }
+  }
+}

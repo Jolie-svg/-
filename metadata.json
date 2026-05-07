@@ -1,0 +1,6 @@
+{
+  "name": "HR 智慧面試查詢系統",
+  "description": "專為服務業設計的應徵者紀錄查詢平台，提升招募效率並確保個資安全。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["auth", "database", "ai_analysis"]
+}
