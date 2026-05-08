@@ -39,7 +39,8 @@ interface Record {
 }
 
 // --- Constants ---
-const FIXED_SHEET_ID = '1syQgXhAwQV2DLn54gRjsNG1NTLAR59g5hBKzJDK6uh8';
+const DEFAULT_SHEET_ID = '1syQgXhAwQV2DLn54gRjsNG1NTLAR59g5hBKzJDK6uh8';
+const FIXED_SHEET_ID = import.meta.env.VITE_SHEET_ID || DEFAULT_SHEET_ID;
 
 export default function App() {
   // Auth State
@@ -107,9 +108,25 @@ export default function App() {
         body: JSON.stringify({ sheetId: FIXED_SHEET_ID })
       });
       
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || '抓取資料失敗');
+      const contentType = response.headers.get('content-type');
+      if (!response.ok) {
+        let errorMsg = '抓取資料失敗';
+        if (contentType && contentType.includes('application/json')) {
+          const data = await response.json();
+          errorMsg = data.error || errorMsg;
+        } else {
+          const text = await response.text();
+          console.error('Non-JSON error response:', text);
+          errorMsg = `伺服器回傳錯誤 (${response.status}): ${text.substring(0, 100)}`;
+        }
+        throw new Error(errorMsg);
+      }
 
+      if (!contentType || !contentType.includes('application/json')) {
+        throw new Error('伺服器回傳格式錯誤 (非 JSON)');
+      }
+
+      const data = await response.json();
       const allRows = data.rows as string[][];
       parseSheetData(allRows);
     } catch (err) {

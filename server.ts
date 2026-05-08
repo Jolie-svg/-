@@ -13,13 +13,22 @@ async function startServer() {
   // JSON parsing middleware
   app.use(express.json());
 
+  // Request logger
+  app.use((req, res, next) => {
+    console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
+    next();
+  });
+
   // API routes
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok", timestamp: new Date().toISOString() });
   });
 
   // Google Sheets Sync Proxy
-  app.post("/api/sync-sheets", async (req, res) => {
+  app.all("/api/sync-sheets", async (req, res) => {
+    if (req.method !== "POST") {
+      return res.status(405).json({ error: "Method Not Allowed. Please use POST." });
+    }
     console.log("POST /api/sync-sheets received", req.body);
     let { sheetId } = req.body;
     if (!sheetId) return res.status(400).json({ error: "Missing sheetId" });
@@ -107,6 +116,11 @@ async function startServer() {
       console.error("Sync Error:", error);
       res.status(500).json({ error: (error as Error).message });
     }
+  });
+
+  // Catch-all 404 for /api routes
+  app.all("/api/*", (req, res) => {
+    res.status(404).json({ error: `API route not found: ${req.method} ${req.path}` });
   });
 
   // Vite middleware for development
