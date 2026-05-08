@@ -38,6 +38,14 @@ interface Record {
   notes: string;
 }
 
+interface UserAccount {
+  id: string;
+  username: string;
+  role: 'admin' | 'user';
+  isFrozen: boolean;
+  password?: string;
+}
+
 // --- Constants ---
 const DEFAULT_SHEET_ID = '1syQgXhAwQV2DLn54gRjsNG1NTLAR59g5hBKzJDK6uh8';
 const FIXED_SHEET_ID = import.meta.env.VITE_SHEET_ID || DEFAULT_SHEET_ID;
@@ -45,10 +53,15 @@ const FIXED_SHEET_ID = import.meta.env.VITE_SHEET_ID || DEFAULT_SHEET_ID;
 export default function App() {
   // Auth State
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [currentUser, setCurrentUser] = useState<UserAccount | null>(null);
   const [authError, setAuthError] = useState('');
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
+  const [usernameInput, setUsernameInput] = useState('');
+  const [passwordInput, setPasswordInput] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
+
+  // User Management State
+  const [users, setUsers] = useState<UserAccount[]>([]);
+  const [activeTab, setActiveTab] = useState<'search' | 'admin'>('search');
 
   // Data State
   const [allCandidates, setAllCandidates] = useState<Candidate[]>([]);
@@ -65,12 +78,41 @@ export default function App() {
 
   // Session Persistence
   useEffect(() => {
-    const session = localStorage.getItem('hr_session');
-    if (session === 'active') {
-      setIsAuthenticated(true);
-      fetchDataFromSheets();
+    // Initialize Users if not exists
+    const storedUsers = localStorage.getItem('hr_users');
+    let initialUsers: UserAccount[] = [];
+    if (storedUsers) {
+      initialUsers = JSON.parse(storedUsers);
+    } else {
+      // Default admin account
+      initialUsers = [
+        { id: 'u-1', username: 'admin', password: 'admin', role: 'admin', isFrozen: false }
+      ];
+      localStorage.setItem('hr_users', JSON.stringify(initialUsers));
+    }
+    setUsers(initialUsers);
+
+    const session = localStorage.getItem('hr_session_user');
+    if (session) {
+      const user = JSON.parse(session) as UserAccount;
+      // Re-verify against current users list (in case of freeze/delete)
+      const freshUser = initialUsers.find(u => u.id === user.id);
+      if (freshUser && !freshUser.isFrozen) {
+        setIsAuthenticated(true);
+        setCurrentUser(freshUser);
+        fetchDataFromSheets();
+      } else {
+        localStorage.removeItem('hr_session_user');
+      }
     }
   }, []);
+
+  // Update localStorage whenever users change
+  useEffect(() => {
+    if (users.length > 0) {
+      localStorage.setItem('hr_users', JSON.stringify(users));
+    }
+  }, [users]);
 
   // --- Handlers ---
   const handleLogin = (e: React.FormEvent) => {
@@ -78,12 +120,18 @@ export default function App() {
     setIsLoggingIn(true);
     setAuthError('');
 
-    // Simulate simple login
     setTimeout(() => {
-      if (username === 'admin' && password === 'admin') {
-        setIsAuthenticated(true);
-        localStorage.setItem('hr_session', 'active');
-        fetchDataFromSheets();
+      const user = users.find(u => u.username === usernameInput && u.password === passwordInput);
+      
+      if (user) {
+        if (user.isFrozen) {
+          setAuthError('此帳號已被凍結，請聯繫管理員');
+        } else {
+          setIsAuthenticated(true);
+          setCurrentUser(user);
+          localStorage.setItem('hr_session_user', JSON.stringify(user));
+          fetchDataFromSheets();
+        }
       } else {
         setAuthError('帳號或密碼錯誤');
       }
@@ -93,10 +141,44 @@ export default function App() {
 
   const handleLogout = () => {
     setIsAuthenticated(false);
-    localStorage.removeItem('hr_session');
+    setCurrentUser(null);
+    localStorage.removeItem('hr_session_user');
     setAllCandidates([]);
     setAllRecords([]);
     setSelectedCandidate(null);
+    setActiveTab('search');
+  };
+
+  const addUser = (name: string, pass: string) => {
+    if (users.some(u => u.username === name)) {
+      alert('帳號已存在');
+      return;
+    }
+    const newUser: UserAccount = {
+      id: `u-${Date.now()}`,
+      username: name,
+      password: pass,
+      role: 'user',
+      isFrozen: false
+    };
+    setUsers([...users, newUser]);
+  };
+
+  const removeUser = (id: string) => {
+    const user = users.find(u => u.id === id);
+    if (user?.role === 'admin') {
+      alert('不能刪除管理員帳號');
+      return;
+    }
+    setUsers(users.filter(u => u.id !== id));
+  };
+
+  const toggleFreeze = (id: string) => {
+    const user = users.find(u => u.id === id);
+    if (user?.role === 'admin') return;
+    setUsers(users.map(u => 
+      u.id === id ? { ...u, isFrozen: !u.isFrozen } : u
+    ));
   };
 
   const fetchDataFromSheets = async () => {
@@ -264,18 +346,18 @@ export default function App() {
               <label className="block text-xs font-bold text-slate-500 uppercase mb-2">帳號</label>
               <input 
                 type="text" 
-                value={username} onChange={e => setUsername(e.target.value)}
+                value={usernameInput} onChange={e => setUsernameInput(e.target.value)}
                 className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
-                placeholder="預設 admin" required
+                placeholder="請輸入帳號" required
               />
             </div>
             <div>
               <label className="block text-xs font-bold text-slate-500 uppercase mb-2">密碼</label>
               <input 
                 type="password" 
-                value={password} onChange={e => setPassword(e.target.value)}
+                value={passwordInput} onChange={e => setPasswordInput(e.target.value)}
                 className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
-                placeholder="預設 admin" required
+                placeholder="請輸入密碼" required
               />
             </div>
             {authError && <p className="text-red-500 text-xs mt-2 flex items-center gap-1"><AlertCircle className="w-3 h-3" /> {authError}</p>}
@@ -301,6 +383,22 @@ export default function App() {
         </div>
         
         <div className="flex items-center gap-6">
+          {currentUser?.role === 'admin' && (
+            <div className="flex bg-slate-100 p-1 rounded-lg">
+              <button 
+                onClick={() => setActiveTab('search')}
+                className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all ${activeTab === 'search' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500'}`}
+              >
+                人才搜尋
+              </button>
+              <button 
+                onClick={() => setActiveTab('admin')}
+                className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all ${activeTab === 'admin' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500'}`}
+              >
+                權限管理
+              </button>
+            </div>
+          )}
           <div className="hidden md:flex items-center gap-2 text-sm font-medium text-slate-600">
             {loading ? (
               <span className="flex items-center gap-2 text-indigo-600 animate-pulse">
@@ -319,8 +417,10 @@ export default function App() {
       </nav>
 
       <main className="flex-1 grid grid-cols-1 md:grid-cols-12 gap-8 p-6 md:p-10 max-w-[1600px] mx-auto w-full">
-        {/* Left Side: Search */}
-        <div className="md:col-span-4 flex flex-col gap-6">
+        {activeTab === 'search' ? (
+          <>
+            {/* Left Side: Search */}
+            <div className="md:col-span-4 flex flex-col gap-6">
           <section className="bg-white p-7 rounded-2xl border border-slate-200 shadow-sm">
             <h2 className="text-lg font-bold mb-6 flex items-center gap-2 text-slate-800"><Search className="w-5 h-5 text-indigo-600" /> 人才檢索</h2>
             <form onSubmit={handleSearch} className="space-y-4">
@@ -428,7 +528,135 @@ export default function App() {
             )}
           </AnimatePresence>
         </div>
+        </>
+        ) : (
+          <div className="md:col-span-12">
+            <UserManagementView 
+              users={users} 
+              onAdd={addUser} 
+              onDelete={removeUser} 
+              onToggleFreeze={toggleFreeze} 
+            />
+          </div>
+        )}
       </main>
     </div>
+  );
+}
+
+// --- Sub-components ---
+
+function UserManagementView({ 
+  users, 
+  onAdd, 
+  onDelete, 
+  onToggleFreeze 
+}: { 
+  users: UserAccount[], 
+  onAdd: (name: string, pass: string) => void,
+  onDelete: (id: string) => void,
+  onToggleFreeze: (id: string) => void
+}) {
+  const [newName, setNewName] = useState('');
+  const [newPass, setNewPass] = useState('');
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newName.trim() || !newPass.trim()) return;
+    onAdd(newName.trim(), newPass.trim());
+    setNewName('');
+    setNewPass('');
+  };
+
+  return (
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-8">
+      <div className="bg-white p-8 rounded-2xl border border-slate-200 shadow-sm">
+        <h2 className="text-xl font-bold mb-6 text-slate-800 flex items-center gap-2">
+          <UserPlus className="w-6 h-6 text-indigo-600" /> 新增使用者帳號
+        </h2>
+        <form onSubmit={handleSubmit} className="flex flex-col md:flex-row gap-4">
+          <input 
+            type="text" value={newName} onChange={e => setNewName(e.target.value)}
+            placeholder="使用者帳號 (Username)"
+            className="flex-1 px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg outline-none"
+            required
+          />
+          <input 
+            type="text" value={newPass} onChange={e => setNewPass(e.target.value)}
+            placeholder="初始密碼"
+            className="flex-1 px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg outline-none"
+            required
+          />
+          <button className="bg-indigo-600 text-white px-8 py-3 rounded-lg font-bold hover:bg-indigo-700 transition-all">
+            建立帳號
+          </button>
+        </form>
+      </div>
+
+      <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+        <div className="px-8 py-5 bg-slate-50 border-b border-slate-200 font-bold text-xs text-slate-500 uppercase tracking-widest">
+          帳號清單與權限設定
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left">
+            <thead>
+              <tr className="border-b border-slate-100">
+                <th className="px-8 py-4 text-xs font-bold text-slate-400 uppercase">帳號</th>
+                <th className="px-8 py-4 text-xs font-bold text-slate-400 uppercase">密碼 (明碼)</th>
+                <th className="px-8 py-4 text-xs font-bold text-slate-400 uppercase">權限級別</th>
+                <th className="px-8 py-4 text-xs font-bold text-slate-400 uppercase">狀態</th>
+                <th className="px-8 py-4 text-xs font-bold text-slate-400 uppercase text-right">操作</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-50">
+              {users.map(u => (
+                <tr key={u.id} className="hover:bg-slate-50 transition-colors">
+                  <td className="px-8 py-4">
+                    <span className="font-bold text-slate-700">{u.username}</span>
+                  </td>
+                  <td className="px-8 py-4 font-mono text-sm text-slate-400">
+                    {u.password}
+                  </td>
+                  <td className="px-8 py-4">
+                    <span className={`px-2 py-1 rounded text-[10px] font-bold ${u.role === 'admin' ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-600'}`}>
+                      {u.role === 'admin' ? 'SYSTEM ADMIN' : 'USER'}
+                    </span>
+                  </td>
+                  <td className="px-8 py-4">
+                    {u.isFrozen ? (
+                      <span className="flex items-center gap-1 text-red-500 text-xs font-bold">
+                        <AlertCircle className="w-3 h-3" /> 已凍結
+                      </span>
+                    ) : (
+                      <span className="flex items-center gap-1 text-emerald-500 text-xs font-bold">
+                        <ShieldCheck className="w-3 h-3" /> 正常
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-8 py-4 text-right space-x-2">
+                    {u.role !== 'admin' && (
+                      <>
+                        <button 
+                          onClick={() => onToggleFreeze(u.id)}
+                          className={`px-3 py-1.5 rounded text-xs font-bold transition-all ${u.isFrozen ? 'bg-emerald-50 text-emerald-600 hover:bg-emerald-100' : 'bg-amber-50 text-amber-600 hover:bg-amber-100'}`}
+                        >
+                          {u.isFrozen ? '解除凍結' : '凍結帳號'}
+                        </button>
+                        <button 
+                          onClick={() => onDelete(u.id)}
+                          className="px-3 py-1.5 rounded bg-red-50 text-red-600 hover:bg-red-100 text-xs font-bold transition-all"
+                        >
+                          刪除
+                        </button>
+                      </>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </motion.div>
   );
 }
