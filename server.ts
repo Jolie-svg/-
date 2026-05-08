@@ -20,6 +20,7 @@ async function startServer() {
 
   // Google Sheets Sync Proxy
   app.post("/api/sync-sheets", async (req, res) => {
+    console.log("POST /api/sync-sheets received", req.body);
     let { sheetId } = req.body;
     if (!sheetId) return res.status(400).json({ error: "Missing sheetId" });
 
@@ -28,20 +29,20 @@ async function startServer() {
     if (match) sheetId = match[1];
 
     try {
-      // Use gviz endpoint which is sometimes more reliable for public sheets
-      const csvUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv`;
+      // Use standard export URL
+      const csvUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv`;
       console.log(`Attempting to fetch sheet from: ${csvUrl}`);
       const response = await fetch(csvUrl);
       
       if (!response.ok) {
         if (response.status === 404) throw new Error(`找不到試算表 (404)。請確認 ID (${sheetId}) 是否正確。`);
-        if (response.status === 403) throw new Error("權限不足 (403)。請將 Google Sheet 設定為「知道連結的人均可查看」。");
+        if (response.status === 403) throw new Error("權限不足 (403)。請將 Google Sheet 設定為「知道連結的人均可查看」。或試算表 ID 有誤。");
         throw new Error(`Google 回傳錯誤 (${response.status}): ${response.statusText}`);
       }
       
       const csvData = await response.text();
-      if (csvData.includes("<!DOCTYPE html>")) {
-         throw new Error("同步失敗：該試算表可能未公開，請確認共享設定。");
+      if (csvData.includes("<!DOCTYPE html>") || csvData.includes("<!doctype html>")) {
+         throw new Error("同步失敗：該試算表可能未公開，或網址錯誤。請確認 Google Sheet 已設定為「知道連結的人均可查看」。");
       }
 
       // Robust CSV splitting that handles commas within quotes
@@ -126,6 +127,12 @@ async function startServer() {
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`HR System running on http://localhost:${PORT}`);
+  });
+
+  // Global Error Handler
+  app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+    console.error("Unhandled Error:", err);
+    res.status(500).json({ error: err.message || "Internal Server Error" });
   });
 }
 
