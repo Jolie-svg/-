@@ -102,36 +102,45 @@ export default function App() {
   const fetchDataFromSheets = async () => {
     setLoading(true);
     try {
-      const response = await fetch('/api/sync-sheets', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sheetId: FIXED_SHEET_ID })
-      });
+      // Direct client-side fetch from Google Sheets CSV export
+      // URL: https://docs.google.com/spreadsheets/d/{ID}/export?format=csv
+      const csvUrl = `https://docs.google.com/spreadsheets/d/${FIXED_SHEET_ID}/export?format=csv`;
       
-      const contentType = response.headers.get('content-type');
+      const response = await fetch(csvUrl);
+      
       if (!response.ok) {
-        let errorMsg = '抓取資料失敗';
-        if (contentType && contentType.includes('application/json')) {
-          const data = await response.json();
-          errorMsg = data.error || errorMsg;
-        } else {
-          const text = await response.text();
-          console.error('Non-JSON error response:', text);
-          errorMsg = `伺服器回傳錯誤 (${response.status}): ${text.substring(0, 100)}`;
+        if (response.status === 403 || response.status === 401) {
+          throw new Error("存取被拒。請確認 Google Sheet 已設定為「知道連結的人均可查看」。");
         }
-        throw new Error(errorMsg);
+        throw new Error(`無法從 Google 取得資料 (${response.status})`);
       }
 
-      if (!contentType || !contentType.includes('application/json')) {
-        throw new Error('伺服器回傳格式錯誤 (非 JSON)');
+      const csvText = await response.text();
+      
+      // Basic check for HTML (which usually means a login page instead of CSV)
+      if (csvText.includes("<!DOCTYPE html>") || csvText.includes("<!doctype html>")) {
+         throw new Error("讀取失敗：獲取到的是網頁而非資料。請確認 Google Sheet 已設定為「知道連結的人均可查看」。");
       }
 
-      const data = await response.json();
-      const allRows = data.rows as string[][];
-      parseSheetData(allRows);
+      // Simple CSV Parser (Handles commas in quotes)
+      const rows: string[][] = [];
+      const lines = csvText.split(/\r?\n/);
+      
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        const matches = line.match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g);
+        if (matches) {
+          rows.push(matches.map(m => m.replace(/^"|"$/g, '').trim()));
+        } else {
+          // Fallback split for simpler lines
+          rows.push(line.split(',').map(c => c.trim()));
+        }
+      }
+
+      parseSheetData(rows);
     } catch (err) {
-      console.error(err);
-      alert('自動同步資料失敗：' + (err as Error).message);
+      console.error("Sync Error:", err);
+      alert('同步資料失敗：' + (err as Error).message);
     } finally {
       setLoading(false);
     }
