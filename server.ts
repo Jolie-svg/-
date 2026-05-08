@@ -28,13 +28,15 @@ async function startServer() {
     if (match) sheetId = match[1];
 
     try {
-      const csvUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv`;
+      // Use gviz endpoint which is sometimes more reliable for public sheets
+      const csvUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/gviz/tq?tqx=out:csv`;
+      console.log(`Attempting to fetch sheet from: ${csvUrl}`);
       const response = await fetch(csvUrl);
       
       if (!response.ok) {
-        if (response.status === 404) throw new Error("找不到試算表，請確認 ID 是否正確。");
-        if (response.status === 403) throw new Error("權限不足，請將 Google Sheet 設定為「知道連結的人均可查看」。");
-        throw new Error(`Google 回傳錯誤: ${response.statusText}`);
+        if (response.status === 404) throw new Error(`找不到試算表 (404)。請確認 ID (${sheetId}) 是否正確。`);
+        if (response.status === 403) throw new Error("權限不足 (403)。請將 Google Sheet 設定為「知道連結的人均可查看」。");
+        throw new Error(`Google 回傳錯誤 (${response.status}): ${response.statusText}`);
       }
       
       const csvData = await response.text();

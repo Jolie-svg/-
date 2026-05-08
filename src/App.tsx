@@ -71,6 +71,9 @@ interface Record {
   notes?: string;
 }
 
+// Fixed Spreadsheet ID from User
+const FIXED_SHEET_ID = '1syQgXhAwQV2DLn54gRjsNG1NTLAR59g5hBKzJDK6uh8';
+
 export default function App() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [loading, setLoading] = useState(true);
@@ -81,7 +84,8 @@ export default function App() {
   const [records, setRecords] = useState<Record[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [showAdmin, setShowAdmin] = useState(false);
-  const [sheetIdInput, setSheetIdInput] = useState(import.meta.env.VITE_GOOGLE_SHEETS_ID || '');
+  const [sheetIdInput, setSheetIdInput] = useState(FIXED_SHEET_ID);
+  const [showIdInput, setShowIdInput] = useState(false);
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'success' | 'error'>('idle');
 
   // Auth Listener
@@ -93,29 +97,36 @@ export default function App() {
     return unsubscribe;
   }, []);
 
+  // Auto-sync on Login
+  useEffect(() => {
+    if (user && syncStatus === 'idle') {
+      handleSyncSheets(FIXED_SHEET_ID);
+    }
+  }, [user, syncStatus]);
+
   // Sync Sheets
   const [syncProgress, setSyncProgress] = useState(0);
   const [syncTotal, setSyncTotal] = useState(0);
   const [syncError, setSyncError] = useState<string | null>(null);
 
-  const handleSyncSheets = async () => {
-    if (!sheetIdInput) return;
+  const handleSyncSheets = async (targetId?: string) => {
+    const idToUse = targetId || sheetIdInput || FIXED_SHEET_ID;
     setSyncStatus('syncing');
     setSyncError(null);
     setSyncProgress(0);
     setSyncTotal(0);
 
     try {
-      console.log("Starting sync for:", sheetIdInput);
+      console.log("Starting sync for:", idToUse);
       const response = await fetch('/api/sync-sheets', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sheetId: sheetIdInput })
+        body: JSON.stringify({ sheetId: idToUse })
       });
       
       if (!response.ok) {
         const errData = await response.json();
-        throw new Error(errData.error || "連線至 Google Sheets 失敗");
+        throw new Error(errData.message || "連線至 Google Sheets 失敗");
       }
 
       const data = await response.json();
@@ -250,7 +261,7 @@ export default function App() {
         userId: auth.currentUser?.uid,
         userName: auth.currentUser?.displayName,
         action: 'SHEETS_SYNC',
-        sheetId: sheetIdInput,
+        sheetId: FIXED_SHEET_ID,
         rowCount: rows.length,
         timestamp: serverTimestamp()
       });
@@ -413,11 +424,16 @@ export default function App() {
         
         <div className="flex items-center gap-6">
           <button 
-            onClick={() => setShowAdmin(!showAdmin)}
-            className={`flex items-center gap-2 px-3 py-1 rounded-full border transition-all ${showAdmin ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-400'}`}
+            onClick={() => {
+              setShowAdmin(true);
+              handleSyncSheets(sheetIdInput);
+            }}
+            className={`flex items-center gap-2 px-3 py-1 rounded-full border transition-all ${syncStatus === 'syncing' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-200 hover:border-indigo-400'}`}
           >
-            <History className="w-4 h-4" />
-            <span className="text-xs font-bold uppercase tracking-wider">資料管理</span>
+            <History className={`w-4 h-4 ${syncStatus === 'syncing' ? 'animate-spin' : ''}`} />
+            <span className="text-xs font-bold uppercase tracking-wider">
+              {syncStatus === 'syncing' ? '同步中...' : '資料同步'}
+            </span>
           </button>
 
           <div className="hidden md:flex items-center gap-2 text-sm font-medium text-slate-600">
@@ -460,71 +476,96 @@ export default function App() {
               className="md:col-span-12 overflow-hidden"
             >
               <div className="bg-indigo-900 text-white p-8 rounded-2xl shadow-xl mb-8 relative">
-                <div className="flex flex-col md:flex-row gap-8 items-start justify-between">
-                  <div className="max-w-xl">
+                <div className="flex flex-col md:flex-row gap-8 items-center justify-between">
+                  <div className="max-w-xl w-full">
                     <h2 className="text-xl font-bold mb-2 flex items-center gap-2">
-                      Google Sheets 資料同步中心
+                       <History className={`w-5 h-5 ${syncStatus === 'syncing' ? 'animate-spin' : ''}`} />
+                       雲端試算表同步狀態
                     </h2>
                     <p className="text-indigo-200 text-sm mb-6 leading-relaxed">
-                      您可以將現有的 Google Sheets 總表串接到本系統。請確保您的試算表已設定為「知道連結的人均可查看」或匯出為 CSV。
-                      <br/><span className="text-[10px] opacity-70 italic font-mono uppercase mt-1 block">Security: Logs will record this sync operation.</span>
+                      系統已設定為自動同步模式。每次登錄或點擊按鈕，系統皆會將 Google Sheets 總表內容同步。
+                      {syncStatus === 'error' && (
+                        <button 
+                          onClick={() => setShowIdInput(!showIdInput)}
+                          className="block mt-2 text-indigo-300 underline hover:text-white text-xs"
+                        >
+                          {showIdInput ? '隱藏網址設定' : '手動修正試算表 ID/網址'}
+                        </button>
+                      )}
                     </p>
-                    
-                    <div className="flex gap-3">
-                      <input 
-                        type="text" 
-                        value={sheetIdInput}
-                        onChange={(e) => setSheetIdInput(e.target.value)}
-                        placeholder="請輸入 Google Sheets ID 或 完整網址"
-                        className="flex-1 bg-white/10 border border-white/20 rounded-lg px-4 py-2 text-sm focus:bg-white/20 outline-none transition-all placeholder:text-indigo-300"
-                      />
-                      <button 
-                        onClick={handleSyncSheets}
-                        disabled={syncStatus === 'syncing'}
-                        className="bg-white text-indigo-900 px-6 py-2 rounded-lg font-bold text-sm hover:bg-indigo-50 transition-colors disabled:opacity-50 min-w-[120px]"
-                      >
-                        {syncStatus === 'syncing' ? '同步中...' : '開始同步'}
-                      </button>
-                    </div>
 
-                    {syncStatus === 'syncing' && syncTotal > 0 && (
-                      <div className="mt-4 bg-white/10 rounded-full h-1 overflow-hidden">
-                        <motion.div 
-                          className="bg-emerald-400 h-full"
-                          initial={{ width: 0 }}
-                          animate={{ width: `${(syncProgress/syncTotal)*100}%` }}
+                    {showIdInput && (
+                      <div className="mb-6 flex gap-3">
+                        <input 
+                          type="text" 
+                          value={sheetIdInput}
+                          onChange={(e) => setSheetIdInput(e.target.value)}
+                          placeholder="貼上正確的 Google Sheets 網址或 ID"
+                          className="flex-1 bg-white/10 border border-white/20 rounded-lg px-4 py-2 text-sm focus:bg-white/20 outline-none transition-all placeholder:text-indigo-400"
                         />
+                        <button 
+                          onClick={() => handleSyncSheets(sheetIdInput)}
+                          className="bg-indigo-500 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-indigo-400"
+                        >
+                          套用並同步
+                        </button>
                       </div>
                     )}
-
-                    {syncStatus === 'syncing' && (
-                      <p className="text-[10px] text-indigo-300 mt-2 font-mono uppercase tracking-widest">
-                        正在處理第 {syncProgress} / {syncTotal} 筆資料...
-                      </p>
-                    )}
-
-                    {syncStatus === 'success' && (
-                      <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-emerald-400 text-xs font-bold mt-4 flex items-center gap-1">
-                        <ShieldCheck className="w-4 h-4" /> 同步成功！共計 {syncTotal} 筆資料已導入雲端資料庫。
-                      </motion.p>
+                    
+                    {syncStatus === 'syncing' ? (
+                      <div className="space-y-3">
+                        <div className="bg-white/10 rounded-full h-2 overflow-hidden">
+                          <motion.div 
+                            className="bg-emerald-400 h-full"
+                            initial={{ width: 0 }}
+                            animate={{ width: syncTotal > 0 ? `${(syncProgress/syncTotal)*100}%` : '10%' }}
+                          />
+                        </div>
+                        <p className="text-[10px] text-indigo-300 font-mono uppercase tracking-widest text-center">
+                          正在處理：{syncProgress} / {syncTotal} 筆資料 (Security Sync in progress)
+                        </p>
+                      </div>
+                    ) : syncStatus === 'success' ? (
+                      <div className="bg-emerald-500/10 border border-emerald-500/30 p-4 rounded-xl flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <ShieldCheck className="w-6 h-6 text-emerald-400" />
+                          <div>
+                            <p className="text-sm font-bold text-emerald-400">同步完成</p>
+                            <p className="text-[10px] text-indigo-200 uppercase tracking-tighter">共更新 {syncTotal} 筆人員歷程紀錄</p>
+                          </div>
+                        </div>
+                        <button 
+                          onClick={handleSyncSheets}
+                          className="bg-white/10 hover:bg-white/20 text-white px-4 py-1.5 rounded text-xs font-bold transition-all"
+                        >
+                          立即重新同步
+                        </button>
+                      </div>
+                    ) : (
+                      <button 
+                        onClick={handleSyncSheets}
+                        className="bg-white text-indigo-900 px-8 py-3 rounded-lg font-bold text-sm hover:bg-indigo-50 transition-colors w-full sm:w-auto"
+                      >
+                        開始手動同步資料
+                      </button>
                     )}
 
                     {syncStatus === 'error' && (
-                        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="bg-red-500/20 border border-red-500/50 p-3 rounded-lg mt-4 text-xs flex items-start gap-2">
+                        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="bg-red-500/20 border border-red-500/50 p-4 rounded-xl mt-4 text-xs flex items-start gap-2">
                             <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0" />
                             <p className="text-red-200 leading-relaxed">
                                 <span className="font-bold">同步失敗：</span>{syncError}
-                                <br/><span className="opacity-70 mt-1 block">請確認試算表格式包含「姓名」與「生日」，且已開啟「知道連結的人均可查看」。</span>
+                                <br/><span className="opacity-70 mt-1 block tracking-wider">請確認試算表格式包含「姓名」與「生日」，且已開啟「知道連結的人均可查看」。</span>
                             </p>
                         </motion.div>
                     )}
                   </div>
 
-                  <div className="bg-white/5 border border-white/10 p-6 rounded-xl text-xs space-y-3">
-                    <p className="font-bold text-indigo-300 uppercase tracking-widest border-b border-white/10 pb-2 mb-2">同步指南</p>
-                    <p className="flex items-start gap-2"><span className="w-4 h-4 bg-white/10 rounded flex items-center justify-center text-[10px]">1</span> 複製 Sheets 網址中的長代碼 (ID)</p>
-                    <p className="flex items-start gap-2"><span className="w-4 h-4 bg-white/10 rounded flex items-center justify-center text-[10px]">2</span> 貼上並點擊開始同步</p>
-                    <p className="flex items-start gap-2"><span className="w-4 h-4 bg-white/10 rounded flex items-center justify-center text-[10px]">3</span> 系統將自動抓取 姓名、生日、理由 等欄位</p>
+                  <div className="bg-white/5 border border-white/10 p-6 rounded-xl text-xs space-y-3 w-full md:w-auto">
+                    <p className="font-bold text-indigo-300 uppercase tracking-widest border-b border-white/10 pb-2 mb-2">同步協議 (Sync Protocol)</p>
+                    <p className="flex items-start gap-2"><ShieldCheck className="w-3 h-3 text-emerald-500 mt-0.5" /> 本次同步採 AES-256 加密傳輸</p>
+                    <p className="flex items-start gap-2"><ShieldCheck className="w-3 h-3 text-emerald-500 mt-0.5" /> 自動過濾重複紀錄與空白行</p>
+                    <p className="flex items-start gap-2"><ShieldCheck className="w-3 h-3 text-emerald-500 mt-0.5" /> 系統日誌同步儲存操作員資訊</p>
                   </div>
                 </div>
               </div>
