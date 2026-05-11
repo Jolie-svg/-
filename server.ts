@@ -32,15 +32,23 @@ async function startServer() {
     
     // 優先使用伺服器端環境變數中的 Sheet ID 以提高安全性
     const DEFAULT_SHEET_ID = '1syQgXhAwQV2DLn54gRjsNG1NTLAR59g5hBKzJDK6uh8';
-    const googleSheetId = process.env.GOOGLE_SHEET_ID;
+    const googleSheetIdFromEnv = process.env.GOOGLE_SHEET_ID;
     
-    if (googleSheetId) {
-      sheetId = googleSheetId;
-    } else if (!sheetId) {
+    // 決定最終使用的 ID
+    if (googleSheetIdFromEnv && googleSheetIdFromEnv.trim() !== '') {
+      sheetId = googleSheetIdFromEnv.trim();
+      console.log("Using sheetId from GOOGLE_SHEET_ID env");
+    } else if (sheetId && sheetId.trim() !== '') {
+      console.log("Using sheetId from Request Body");
+    } else {
       sheetId = DEFAULT_SHEET_ID;
+      console.log("Using Default Fallback sheetId");
     }
 
-    if (!sheetId) return res.status(400).json({ error: "Missing sheetId (應在環境變數或請求中提供)" });
+    if (!sheetId) {
+      console.error("Critical: sheetId is still missing after all fallbacks");
+      return res.status(400).json({ error: "Missing sheetId. Please set GOOGLE_SHEET_ID in environment variables." });
+    }
 
     // Extract ID if a full URL was provided
     const match = sheetId.match(/\/d\/([^/]+)/);
