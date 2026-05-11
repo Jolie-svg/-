@@ -36,10 +36,8 @@ async function startServer() {
     if (match) sheetId = match[1];
 
     const clientEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-    // 更加強大的私鑰處理：
-    // 1. 處理 Vercel 可能將 \n 轉義為 \\n 的問題
-    // 2. 處理可能存在的 \r (Windows 換行)
-    // 3. 移除前後引號或多餘空格
+    const sheetIdFromEnv = process.env.VITE_SHEET_ID;
+
     let privateKey = process.env.GOOGLE_PRIVATE_KEY;
     if (privateKey) {
       privateKey = privateKey
@@ -50,8 +48,21 @@ async function startServer() {
         .trim();
     }
 
+    console.log("Configuration check:", { 
+      hasEmail: !!clientEmail, 
+      hasKey: !!privateKey, 
+      keyLength: privateKey?.length,
+      sheetIdFromRequest: sheetId,
+      sheetIdFromEnv: sheetIdFromEnv
+    });
+
     if (!clientEmail || !privateKey || !privateKey.includes('-----BEGIN PRIVATE KEY-----')) {
-      console.error("Credentials error:", { email: !!clientEmail, keyExists: !!privateKey, hasHeader: privateKey?.includes('BEGIN') });
+      console.error("Credentials error:", { 
+        email: !!clientEmail, 
+        keyExists: !!privateKey, 
+        hasHeader: privateKey?.includes('BEGIN'),
+        keyStart: privateKey?.substring(0, 30) 
+      });
       return res.status(500).json({ 
         error: "伺服器環境變數設定錯誤。請檢查 GOOGLE_PRIVATE_KEY 是否包含完整標頭 (-----BEGIN PRIVATE KEY-----) 且無多餘轉義。" 
       });

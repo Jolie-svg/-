@@ -66,6 +66,7 @@ export default function App() {
   // Data State
   const [allCandidates, setAllCandidates] = useState<Candidate[]>([]);
   const [allRecords, setAllRecords] = useState<Record[]>([]);
+  const [rawRowCount, setRawRowCount] = useState(0);
   const [loading, setLoading] = useState(false);
 
   // Search State
@@ -205,6 +206,7 @@ export default function App() {
 
       const data = await response.json();
       const allRows = data.rows as string[][];
+      setRawRowCount(allRows?.length || 0);
       parseSheetData(allRows);
     } catch (err) {
       console.error("Sync Error:", err);
@@ -215,60 +217,80 @@ export default function App() {
   };
 
   const parseSheetData = (allRows: string[][]) => {
-    if (!allRows || allRows.length === 0) return;
+    if (!allRows || allRows.length === 0) {
+      console.warn("No rows received from sheet");
+      return;
+    }
 
-    // Find headers
+    // Find headers by looking for "姓名" or "Name" in the first 50 rows
     let headerRowIndex = -1;
-    let nameIdx = 3; 
-    let birthIdx = 4;
+    let nameIdx = -1;
+    let birthIdx = -1;
     let resultIdx = -1;
     let reasonIdx = -1;
     let notesIdx = -1;
     let dateIdx = -1;
 
-    for (let i = 0; i < Math.min(allRows.length, 30); i++) {
+    for (let i = 0; i < Math.min(allRows.length, 50); i++) {
       const row = allRows[i].map(c => c?.toString().trim() || '');
-      const isDName = row[3]?.includes('姓名');
-      if (isDName) {
+      // Look for a column that looks like "Name"
+      const nIdx = row.findIndex(h => h.includes('姓名') || h.toLowerCase() === 'name');
+      if (nIdx !== -1) {
         headerRowIndex = i;
-        nameIdx = 3;
-        birthIdx = 4;
-        resultIdx = row.findIndex(h => h.includes('結果') || h.includes('狀態'));
-        reasonIdx = row.findIndex(h => h.includes('原因') || h.includes('理由'));
-        notesIdx = row.findIndex(h => h.includes('備註') || h.includes('評價'));
-        dateIdx = row.findIndex(h => h.includes('日期') || h.includes('時間'));
+        nameIdx = nIdx;
+        // Search for other headers in the same row
+        birthIdx = row.findIndex(h => h.includes('生日') || h.includes('出生') || h.toLowerCase().includes('birth'));
+        resultIdx = row.findIndex(h => h.includes('結果') || h.includes('狀態') || h.toLowerCase().includes('result') || h.toLowerCase().includes('status'));
+        reasonIdx = row.findIndex(h => h.includes('原因') || h.includes('理由') || h.toLowerCase().includes('reason'));
+        notesIdx = row.findIndex(h => h.includes('備註') || h.includes('評價') || h.toLowerCase().includes('note') || h.toLowerCase().includes('comment'));
+        dateIdx = row.findIndex(h => h.includes('日期') || h.includes('時間') || h.toLowerCase().includes('date'));
         break;
       }
     }
 
-    if (headerRowIndex === -1) return;
+    if (headerRowIndex === -1 || nameIdx === -1) {
+      console.error("Could not find '姓名' column in the first 50 rows. Raw first row:", allRows[0]);
+      alert('解析失敗：找不到「姓名」欄位，請檢查試算表標題是否正確（需包含「姓名」二字）。');
+      return;
+    }
+
+    // Default if birthIdx not found: try next column after name
+    if (birthIdx === -1) birthIdx = nameIdx + 1;
 
     const candidatesMap = new Map<string, Candidate>();
     const recordsList: Record[] = [];
 
     const norm = (s: string) => s.toLowerCase().trim().replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, '');
 
+    let skippedCount = 0;
     allRows.slice(headerRowIndex + 1).forEach((row, rowIndex) => {
       const name = row[nameIdx]?.trim();
-      let birthday = row[birthIdx]?.trim();
-      if (!name || !birthday || name === '姓名') return;
+      let birthday = row[birthIdx]?.trim() || '';
+      
+      // If name is missing, we definitely skip
+      if (!name || name === '姓名' || name === 'Name') {
+        skippedCount++;
+        return;
+      }
 
-      // Format Birthday to YYYY/MM/DD
-      birthday = birthday.replace(/[-\.]/g, '/');
-      const parts = birthday.split('/');
-      if (parts.length === 3) {
-        birthday = `${parts[0]}/${parts[1].padStart(2, '0')}/${parts[2].padStart(2, '0')}`;
+      // Format Birthday to YYYY/MM/DD if present
+      if (birthday) {
+        birthday = birthday.replace(/[-\.]/g, '/');
+        const parts = birthday.split('/');
+        if (parts.length === 3) {
+          birthday = `${parts[0]}/${parts[1].padStart(2, '0')}/${parts[2].padStart(2, '0')}`;
+        }
       }
 
       const candId = `c-${norm(name)}-${norm(birthday)}`;
       if (!candidatesMap.has(candId)) {
-        candidatesMap.set(candId, { id: candId, name, birthday });
+        candidatesMap.set(candId, { id: candId, name, birthday: birthday || '未設定' });
       }
 
-      const result = row[resultIdx]?.trim() || '未知';
-      const reason = row[reasonIdx]?.trim() || '';
-      const notes = row[notesIdx]?.trim() || '';
-      const date = row[dateIdx]?.trim() || new Date().toISOString().split('T')[0];
+      const result = resultIdx !== -1 ? (row[resultIdx]?.trim() || '未知') : '未知';
+      const reason = reasonIdx !== -1 ? (row[reasonIdx]?.trim() || '') : '';
+      const notes = notesIdx !== -1 ? (row[notesIdx]?.trim() || '') : '';
+      const date = dateIdx !== -1 ? (row[dateIdx]?.trim() || new Date().toISOString().split('T')[0]) : new Date().toISOString().split('T')[0];
       const type = (result.includes('離職') || result.includes('曾任')) ? 'employment' : 'interview';
 
       recordsList.push({
@@ -282,8 +304,14 @@ export default function App() {
       });
     });
 
+    console.log(`Parse complete. Total rows: ${allRows.length}, Skipped: ${skippedCount}, Candidates: ${candidatesMap.size}, Records: ${recordsList.length}`);
+
     setAllCandidates(Array.from(candidatesMap.values()));
     setAllRecords(recordsList);
+    
+    if (candidatesMap.size === 0) {
+      alert('解析成功，但沒有找到任何應徵者資料。請檢查標題列下方是否有內容。');
+    }
   };
 
   const handleSearch = (e: React.FormEvent) => {
@@ -391,9 +419,14 @@ export default function App() {
                 <Clock className="w-4 h-4 animate-spin" /> 資料同步中...
               </span>
             ) : (
-              <span className="flex items-center gap-2 text-green-600">
-                <ShieldCheck className="w-4 h-4" /> 雲端連線正常
-              </span>
+              <div className="flex flex-col items-end">
+                <span className="flex items-center gap-2 text-green-600">
+                  <ShieldCheck className="w-4 h-4" /> 雲端連線正常
+                </span>
+                {allCandidates.length > 0 && (
+                  <span className="text-[10px] text-slate-400 font-bold">表格總列數: {rawRowCount} | 應徵者: {allCandidates.length} | 紀錄: {allRecords.length}</span>
+                )}
+              </div>
             )}
           </div>
           <button onClick={handleLogout} className="flex items-center gap-2 text-slate-400 hover:text-red-500 transition-colors font-bold text-sm">
@@ -522,6 +555,9 @@ export default function App() {
               onAdd={addUser} 
               onDelete={removeUser} 
               onToggleFreeze={toggleFreeze} 
+              candidateCount={allCandidates.length}
+              recordCount={allRecords.length}
+              rawRowCount={rawRowCount}
             />
           </div>
         )}
@@ -536,12 +572,18 @@ function UserManagementView({
   users, 
   onAdd, 
   onDelete, 
-  onToggleFreeze 
+  onToggleFreeze,
+  candidateCount,
+  recordCount,
+  rawRowCount
 }: { 
   users: UserAccount[], 
   onAdd: (name: string, pass: string) => void,
   onDelete: (id: string) => void,
-  onToggleFreeze: (id: string) => void
+  onToggleFreeze: (id: string) => void,
+  candidateCount: number,
+  recordCount: number,
+  rawRowCount: number
 }) {
   const [newName, setNewName] = useState('');
   const [newPass, setNewPass] = useState('');
@@ -556,6 +598,41 @@ function UserManagementView({
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-8">
+      <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden mb-8">
+        <div className="px-8 py-5 bg-slate-50 border-b border-slate-200 font-bold text-xs text-slate-500 uppercase tracking-widest flex items-center justify-between">
+          <span>系統配置狀態 (偵偵用)</span>
+          <span className="text-[10px] lowercase text-slate-300">only visible to admins</span>
+        </div>
+        <div className="p-8 grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="space-y-1">
+            <p className="text-[10px] text-slate-400 font-bold uppercase">目前使用的 Sheet ID</p>
+            <p className="text-sm font-mono bg-slate-50 p-2 rounded border border-slate-100 break-all">
+              {import.meta.env.VITE_SHEET_ID || '使用預設值 (尚未設定 VITE_SHEET_ID)'}
+            </p>
+            <p className="text-[9px] text-slate-400 italic">
+              {import.meta.env.VITE_SHEET_ID ? '✓ 已從環境變數讀取' : 'ℹ 請在 Settings 設定 VITE_SHEET_ID'}
+            </p>
+          </div>
+          <div className="space-y-1">
+            <p className="text-[10px] text-slate-400 font-bold uppercase">資料狀態</p>
+            <div className="flex flex-wrap gap-4">
+              <div className="bg-slate-50 p-3 rounded border border-slate-100 flex-1 min-w-[120px]">
+                <p className="text-[10px] text-slate-400">試算表總列數</p>
+                <p className="text-xl font-bold text-slate-600">{rawRowCount}</p>
+              </div>
+              <div className="bg-slate-50 p-3 rounded border border-slate-100 flex-1 min-w-[120px]">
+                <p className="text-[10px] text-slate-400">應徵者數量</p>
+                <p className="text-xl font-bold text-indigo-600">{candidateCount}</p>
+              </div>
+              <div className="bg-slate-50 p-3 rounded border border-slate-100 flex-1 min-w-[120px]">
+                <p className="text-[10px] text-slate-400">歷程紀錄總量</p>
+                <p className="text-xl font-bold text-indigo-600">{recordCount}</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div className="bg-white p-8 rounded-2xl border border-slate-200 shadow-sm">
         <h2 className="text-xl font-bold mb-6 text-slate-800 flex items-center gap-2">
           <UserPlus className="w-6 h-6 text-indigo-600" /> 新增使用者帳號
