@@ -15,26 +15,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // 取得環境變數
   const clientEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
   
-  // 更加健壯的私鑰處理：
+  // 更加強大的私鑰處理：
   // 1. 處理 Vercel 可能將 \n 轉義為 \\n 的問題
-  // 2. 移除前後可能存在的雙引號或單引號
+  // 2. 處理可能存在的 \r (Windows 換行)
+  // 3. 移除前後引號或多餘空格
   let privateKey = process.env.GOOGLE_PRIVATE_KEY;
   if (privateKey) {
     privateKey = privateKey
-      .replace(/\\n/g, '\n') // 處理轉義換行
-      .replace(/^['"]|['"]$/g, '') // 移除前後引號
+      .replace(/\\n/g, '\n')       // 處理 "\\n"
+      .replace(/\n/g, '\n')        // 確保換行符號正確
+      .replace(/\r/g, '')          // 移除 \r
+      .replace(/^["']|["']$/g, '') // 移除頭尾引號
       .trim();
   }
 
-  if (!clientEmail || !privateKey) {
+  if (!clientEmail || !privateKey || !privateKey.includes('-----BEGIN PRIVATE KEY-----')) {
+    console.error("Credentials error:", { email: !!clientEmail, keyExists: !!privateKey, hasHeader: privateKey?.includes('BEGIN') });
     return res.status(500).json({ 
-      error: "伺服器環境變數未設定或格式錯誤 (GOOGLE_SERVICE_ACCOUNT_EMAIL 或 GOOGLE_PRIVATE_KEY)" 
+      error: "伺服器環境變數設定錯誤。請檢查 GOOGLE_PRIVATE_KEY 是否包含完整標頭 (-----BEGIN PRIVATE KEY-----) 且無多餘轉義。" 
     });
-  }
-
-  // 檢查私鑰是否包含 PEM 標頭，如果沒有則補上（預防萬一）
-  if (privateKey && !privateKey.includes('-----BEGIN PRIVATE KEY-----')) {
-     console.warn("Private Key seems to be missing PEM headers, attempting to fix...");
   }
 
   try {

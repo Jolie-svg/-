@@ -36,13 +36,24 @@ async function startServer() {
     if (match) sheetId = match[1];
 
     const clientEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-    // Note: Vercel environment variables might need the \n replacement
-    const privateKey = process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n');
+    // 更加強大的私鑰處理：
+    // 1. 處理 Vercel 可能將 \n 轉義為 \\n 的問題
+    // 2. 處理可能存在的 \r (Windows 換行)
+    // 3. 移除前後引號或多餘空格
+    let privateKey = process.env.GOOGLE_PRIVATE_KEY;
+    if (privateKey) {
+      privateKey = privateKey
+        .replace(/\\n/g, '\n')       // 處理 "\\n"
+        .replace(/\n/g, '\n')        // 確保換行符號正確
+        .replace(/\r/g, '')          // 移除 \r
+        .replace(/^["']|["']$/g, '') // 移除頭尾引號
+        .trim();
+    }
 
-    if (!clientEmail || !privateKey) {
-      console.error("Missing Service Account credentials in environment");
+    if (!clientEmail || !privateKey || !privateKey.includes('-----BEGIN PRIVATE KEY-----')) {
+      console.error("Credentials error:", { email: !!clientEmail, keyExists: !!privateKey, hasHeader: privateKey?.includes('BEGIN') });
       return res.status(500).json({ 
-        error: "伺服器未正確設定 Google Service Account。請在 Vercel 設定 GOOGLE_SERVICE_ACCOUNT_EMAIL 與 GOOGLE_PRIVATE_KEY。" 
+        error: "伺服器環境變數設定錯誤。請檢查 GOOGLE_PRIVATE_KEY 是否包含完整標頭 (-----BEGIN PRIVATE KEY-----) 且無多餘轉義。" 
       });
     }
 
