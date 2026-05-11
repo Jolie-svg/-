@@ -48,7 +48,6 @@ interface UserAccount {
 
 // --- Constants ---
 const DEFAULT_SHEET_ID = '1syQgXhAwQV2DLn54gRjsNG1NTLAR59g5hBKzJDK6uh8';
-const FIXED_SHEET_ID = import.meta.env.VITE_SHEET_ID || DEFAULT_SHEET_ID;
 
 export default function App() {
   // Auth State
@@ -188,7 +187,7 @@ export default function App() {
       const response = await fetch('/api/sync-sheets', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sheetId: FIXED_SHEET_ID })
+        body: JSON.stringify({ }) // Server will use GOOGLE_SHEET_ID from env
       });
       
       const contentType = response.headers.get('content-type');
@@ -598,41 +597,6 @@ function UserManagementView({
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-8">
-      <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden mb-8">
-        <div className="px-8 py-5 bg-slate-50 border-b border-slate-200 font-bold text-xs text-slate-500 uppercase tracking-widest flex items-center justify-between">
-          <span>系統配置狀態 (偵偵用)</span>
-          <span className="text-[10px] lowercase text-slate-300">only visible to admins</span>
-        </div>
-        <div className="p-8 grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="space-y-1">
-            <p className="text-[10px] text-slate-400 font-bold uppercase">目前使用的 Sheet ID</p>
-            <p className="text-sm font-mono bg-slate-50 p-2 rounded border border-slate-100 break-all">
-              {import.meta.env.VITE_SHEET_ID || '使用預設值 (尚未設定 VITE_SHEET_ID)'}
-            </p>
-            <p className="text-[9px] text-slate-400 italic">
-              {import.meta.env.VITE_SHEET_ID ? '✓ 已從環境變數讀取' : 'ℹ 請在 Settings 設定 VITE_SHEET_ID'}
-            </p>
-          </div>
-          <div className="space-y-1">
-            <p className="text-[10px] text-slate-400 font-bold uppercase">資料狀態</p>
-            <div className="flex flex-wrap gap-4">
-              <div className="bg-slate-50 p-3 rounded border border-slate-100 flex-1 min-w-[120px]">
-                <p className="text-[10px] text-slate-400">試算表總列數</p>
-                <p className="text-xl font-bold text-slate-600">{rawRowCount}</p>
-              </div>
-              <div className="bg-slate-50 p-3 rounded border border-slate-100 flex-1 min-w-[120px]">
-                <p className="text-[10px] text-slate-400">應徵者數量</p>
-                <p className="text-xl font-bold text-indigo-600">{candidateCount}</p>
-              </div>
-              <div className="bg-slate-50 p-3 rounded border border-slate-100 flex-1 min-w-[120px]">
-                <p className="text-[10px] text-slate-400">歷程紀錄總量</p>
-                <p className="text-xl font-bold text-indigo-600">{recordCount}</p>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
       <div className="bg-white p-8 rounded-2xl border border-slate-200 shadow-sm">
         <h2 className="text-xl font-bold mb-6 text-slate-800 flex items-center gap-2">
           <UserPlus className="w-6 h-6 text-indigo-600" /> 新增使用者帳號
