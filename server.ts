@@ -2,6 +2,7 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
+import { google } from "googleapis";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -24,11 +25,8 @@ async function startServer() {
     res.json({ status: "ok", timestamp: new Date().toISOString() });
   });
 
-  // Google Sheets Sync Proxy
-  app.all("/api/sync-sheets", async (req, res) => {
-    if (req.method !== "POST") {
-      return res.status(405).json({ error: "Method Not Allowed. Please use POST." });
-    }
+    // Google Sheets Sync Proxy
+  app.post("/api/sync-sheets", async (req, res) => {
     console.log("POST /api/sync-sheets received", req.body);
     let { sheetId } = req.body;
     if (!sheetId) return res.status(400).json({ error: "Missing sheetId" });
@@ -37,84 +35,44 @@ async function startServer() {
     const match = sheetId.match(/\/d\/([^/]+)/);
     if (match) sheetId = match[1];
 
+    const clientEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+    // Note: Vercel environment variables might need the \n replacement
+    const privateKey = process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n');
+
+    if (!clientEmail || !privateKey) {
+      console.error("Missing Service Account credentials in environment");
+      return res.status(500).json({ 
+        error: "伺服器未正確設定 Google Service Account。請在 Vercel 設定 GOOGLE_SERVICE_ACCOUNT_EMAIL 與 GOOGLE_PRIVATE_KEY。" 
+      });
+    }
+
     try {
-      // Use standard export URL
-      const csvUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv`;
-      console.log(`Attempting to fetch sheet from: ${csvUrl}`);
-      const response = await fetch(csvUrl);
-      
-      if (!response.ok) {
-        if (response.status === 404) throw new Error(`找不到試算表 (404)。請確認 ID (${sheetId}) 是否正確。`);
-        if (response.status === 403) throw new Error("權限不足 (403)。請將 Google Sheet 設定為「知道連結的人均可查看」。或試算表 ID 有誤。");
-        throw new Error(`Google 回傳錯誤 (${response.status}): ${response.statusText}`);
-      }
-      
-      const csvData = await response.text();
-      if (csvData.includes("<!DOCTYPE html>") || csvData.includes("<!doctype html>")) {
-         throw new Error("同步失敗：該試算表可能未公開，或網址錯誤。請確認 Google Sheet 已設定為「知道連結的人均可查看」。");
-      }
+      const auth = new google.auth.JWT({
+        email: clientEmail,
+        key: privateKey,
+        scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"]
+      });
 
-      // Robust CSV splitting that handles commas within quotes
-      const parseCSV = (text: string) => {
-        const rows: string[][] = [];
-        let row: string[] = [];
-        let field = '';
-        let inQuotes = false;
-        
-        for (let i = 0; i < text.length; i++) {
-          const char = text[i];
-          const nextChar = text[i + 1];
-          
-          if (inQuotes) {
-            if (char === '"' && nextChar === '"') {
-              field += '"';
-              i++; // skip next quote
-            } else if (char === '"') {
-              inQuotes = false;
-            } else {
-              field += char;
-            }
-          } else {
-            if (char === '"') {
-              inQuotes = true;
-            } else if (char === ',') {
-              row.push(field.trim());
-              field = '';
-            } else if (char === '\n' || char === '\r') {
-              row.push(field.trim());
-              if (row.length > 0 || field !== '') {
-                rows.push(row);
-              }
-              row = [];
-              field = '';
-              if (char === '\r' && nextChar === '\n') {
-                i++; // skip \n
-              }
-            } else {
-              field += char;
-            }
-          }
-        }
-        
-        // Push last field/row if exists
-        if (field !== '' || row.length > 0) {
-          row.push(field.trim());
-          rows.push(row);
-        }
-        
-        return rows;
-      };
-
-      const rows = parseCSV(csvData);
+      const sheets = google.sheets({ version: "v4", auth });
+      const range = "A:Z"; 
       
+      console.log(`Fetching from Google Sheets via Service Account for ID: ${sheetId}`);
+      
+      const response = await sheets.spreadsheets.values.get({
+        spreadsheetId: sheetId,
+        range: range,
+      });
+
+      const rows = response.data.values || [];
       res.json({ 
-        message: "Data fetched successfully", 
+        message: "Data synced successfully", 
         rowCount: rows.length,
         rows: rows
       });
-    } catch (error) {
-      console.error("Sync Error:", error);
-      res.status(500).json({ error: (error as Error).message });
+    } catch (error: any) {
+      console.error("Google Sheets API Error:", error);
+      const msg = error.response?.data?.error?.message || error.message || "無法從 Google Sheets 取得資料";
+      res.status(500).json({ error: `同步異常: ${msg}` });
     }
   });
 

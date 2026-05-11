@@ -184,42 +184,28 @@ export default function App() {
   const fetchDataFromSheets = async () => {
     setLoading(true);
     try {
-      // Direct client-side fetch from Google Sheets CSV export
-      // URL: https://docs.google.com/spreadsheets/d/{ID}/export?format=csv
-      const csvUrl = `https://docs.google.com/spreadsheets/d/${FIXED_SHEET_ID}/export?format=csv`;
+      const response = await fetch('/api/sync-sheets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sheetId: FIXED_SHEET_ID })
+      });
       
-      const response = await fetch(csvUrl);
-      
+      const contentType = response.headers.get('content-type');
       if (!response.ok) {
-        if (response.status === 403 || response.status === 401) {
-          throw new Error("存取被拒。請確認 Google Sheet 已設定為「知道連結的人均可查看」。");
-        }
-        throw new Error(`無法從 Google 取得資料 (${response.status})`);
-      }
-
-      const csvText = await response.text();
-      
-      // Basic check for HTML (which usually means a login page instead of CSV)
-      if (csvText.includes("<!DOCTYPE html>") || csvText.includes("<!doctype html>")) {
-         throw new Error("讀取失敗：獲取到的是網頁而非資料。請確認 Google Sheet 已設定為「知道連結的人均可查看」。");
-      }
-
-      // Simple CSV Parser (Handles commas in quotes)
-      const rows: string[][] = [];
-      const lines = csvText.split(/\r?\n/);
-      
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        const matches = line.match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g);
-        if (matches) {
-          rows.push(matches.map(m => m.replace(/^"|"$/g, '').trim()));
+        let errorMsg = '抓取資料失敗';
+        if (contentType && contentType.includes('application/json')) {
+          const data = await response.json();
+          errorMsg = data.error || errorMsg;
         } else {
-          // Fallback split for simpler lines
-          rows.push(line.split(',').map(c => c.trim()));
+          const text = await response.text();
+          errorMsg = `伺服器錯誤 (${response.status}): ${text.substring(0, 100)}`;
         }
+        throw new Error(errorMsg);
       }
 
-      parseSheetData(rows);
+      const data = await response.json();
+      const allRows = data.rows as string[][];
+      parseSheetData(allRows);
     } catch (err) {
       console.error("Sync Error:", err);
       alert('同步資料失敗：' + (err as Error).message);
@@ -379,7 +365,7 @@ export default function App() {
       <nav className="flex items-center justify-between px-8 py-4 bg-white border-b border-slate-200 sticky top-0 z-50">
         <div className="flex items-center gap-3">
           <div className="bg-indigo-600 p-2 rounded-lg"><ShieldCheck className="w-6 h-6 text-white" /></div>
-          <span className="text-xl font-bold tracking-tight text-indigo-900">HR Historical Insights</span>
+          <span className="text-xl font-bold tracking-tight text-indigo-900">應徵者查詢系統</span>
         </div>
         
         <div className="flex items-center gap-6">
