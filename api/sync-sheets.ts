@@ -14,8 +14,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   // 取得環境變數
   const clientEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-  // Vercel 的私鑰換行處理
-  const privateKey = process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n');
+  // 更加健壯的私鑰處理：處理 \n 轉換並移除可能的包裹引號
+  let privateKey = process.env.GOOGLE_PRIVATE_KEY;
+  if (privateKey) {
+    privateKey = privateKey.replace(/\\n/g, '\n').replace(/^"(.*)"$/, '$1').trim();
+  }
 
   if (!clientEmail || !privateKey) {
     return res.status(500).json({ 
