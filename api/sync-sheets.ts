@@ -7,10 +7,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(405).json({ error: 'Method Not Allowed' });
   }
 
-  const { sheetId } = req.body;
+  let { sheetId } = req.body;
+  
+  // 優先使用伺服器端環境變數中的 Sheet ID
+  const DEFAULT_SHEET_ID = '1syQgXhAwQV2DLn54gRjsNG1NTLAR59g5hBKzJDK6uh8';
+  const googleSheetIdFromEnv = process.env.GOOGLE_SHEET_ID;
+  
+  if (googleSheetIdFromEnv && googleSheetIdFromEnv.trim() !== '') {
+    sheetId = googleSheetIdFromEnv.trim();
+  } else if (!sheetId || sheetId.trim() === '') {
+    sheetId = DEFAULT_SHEET_ID;
+  }
+
   if (!sheetId) {
     return res.status(400).json({ error: 'Missing sheetId' });
   }
+
+  // Extract ID if a full URL was provided
+  const match = sheetId.match(/\/d\/([^/]+)/);
+  if (match) sheetId = match[1];
 
   // 取得環境變數
   const clientEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
