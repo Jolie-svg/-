@@ -17,7 +17,8 @@ import {
   MessageSquare,
   ChevronRight,
   Clock,
-  Lock
+  Lock,
+  Settings
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -60,7 +61,7 @@ export default function App() {
 
   // User Management State
   const [users, setUsers] = useState<UserAccount[]>([]);
-  const [activeTab, setActiveTab] = useState<'search' | 'admin'>('search');
+  const [activeTab, setActiveTab] = useState<'search' | 'admin' | 'password'>('search');
 
   // Data State
   const [allCandidates, setAllCandidates] = useState<Candidate[]>([]);
@@ -83,10 +84,17 @@ export default function App() {
     let initialUsers: UserAccount[] = [];
     if (storedUsers) {
       initialUsers = JSON.parse(storedUsers);
+      // 自動更新現有的 admin 帳號（遷移邏輯）
+      const adminUser = initialUsers.find(u => u.username === 'admin' && u.role === 'admin');
+      if (adminUser) {
+        adminUser.username = 'onlyadmin';
+        adminUser.password = 'onlyadmin';
+        localStorage.setItem('hr_users', JSON.stringify(initialUsers));
+      }
     } else {
       // Default admin account
       initialUsers = [
-        { id: 'u-1', username: 'admin', password: 'admin', role: 'admin', isFrozen: false }
+        { id: 'u-1', username: 'onlyadmin', password: 'onlyadmin', role: 'admin', isFrozen: false }
       ];
       localStorage.setItem('hr_users', JSON.stringify(initialUsers));
     }
@@ -179,6 +187,24 @@ export default function App() {
     setUsers(users.map(u => 
       u.id === id ? { ...u, isFrozen: !u.isFrozen } : u
     ));
+  };
+
+  const changePassword = (newPass: string) => {
+    if (!currentUser) return;
+    
+    // 先更新資料
+    const updatedUsers = users.map(u => 
+      u.id === currentUser.id ? { ...u, password: newPass } : u
+    );
+    
+    setUsers(updatedUsers);
+    localStorage.setItem('hr_users', JSON.stringify(updatedUsers));
+    
+    // 延遲執行以確保使用者能看到彈窗並完成狀態切換
+    setTimeout(() => {
+      alert('已修改完成');
+      handleLogout();
+    }, 100);
   };
 
   const fetchDataFromSheets = async () => {
@@ -395,8 +421,8 @@ export default function App() {
           <span className="text-xl font-bold tracking-tight text-indigo-900">應徵者查詢系統</span>
         </div>
         
-        <div className="flex items-center gap-6">
-          {currentUser?.role === 'admin' && (
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
             <div className="flex bg-slate-100 p-1 rounded-lg">
               <button 
                 onClick={() => setActiveTab('search')}
@@ -404,14 +430,25 @@ export default function App() {
               >
                 人才搜尋
               </button>
-              <button 
-                onClick={() => setActiveTab('admin')}
-                className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all ${activeTab === 'admin' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500'}`}
-              >
-                權限管理
-              </button>
+              {currentUser?.role === 'admin' && (
+                <button 
+                  onClick={() => setActiveTab('admin')}
+                  className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all ${activeTab === 'admin' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500'}`}
+                >
+                  權限管理
+                </button>
+              )}
             </div>
-          )}
+
+            <button 
+              onClick={() => setActiveTab('password')}
+              title="修改密碼"
+              className={`p-2 rounded-lg transition-all ${activeTab === 'password' ? 'bg-indigo-100 text-indigo-600' : 'text-slate-400 hover:bg-slate-100 hover:text-slate-600'}`}
+            >
+              <Settings className="w-5 h-5" />
+            </button>
+          </div>
+          
           <div className="hidden md:flex items-center gap-2 text-sm font-medium text-slate-600">
             {loading ? (
               <span className="flex items-center gap-2 text-indigo-600 animate-pulse">
@@ -546,8 +583,8 @@ export default function App() {
             )}
           </AnimatePresence>
         </div>
-        </>
-        ) : (
+          </>
+        ) : activeTab === 'admin' ? (
           <div className="md:col-span-12">
             <UserManagementView 
               users={users} 
@@ -559,6 +596,10 @@ export default function App() {
               rawRowCount={rawRowCount}
             />
           </div>
+        ) : (
+          <div className="md:col-span-12 flex justify-center py-10">
+            <ChangePasswordView onUpdate={changePassword} />
+          </div>
         )}
       </main>
     </div>
@@ -566,6 +607,81 @@ export default function App() {
 }
 
 // --- Sub-components ---
+
+function ChangePasswordView({ onUpdate }: { onUpdate: (pass: string) => void }) {
+  const [newPass, setNewPass] = useState('');
+  const [confirmPass, setConfirmPass] = useState('');
+  const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (submitting) return;
+    setError('');
+
+    if (newPass.length < 6) {
+      setError('密碼長度至少需 6 個字元');
+      return;
+    }
+
+    const alphaNumeric = /^[a-zA-Z0-9]+$/;
+    if (!alphaNumeric.test(newPass)) {
+      setError('密碼僅能包含英文字母與數字');
+      return;
+    }
+
+    if (newPass !== confirmPass) {
+      setError('兩次輸入的密碼不一致');
+      return;
+    }
+
+    setSubmitting(true);
+    onUpdate(newPass);
+  };
+
+  return (
+    <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="bg-white p-10 rounded-2xl shadow-xl border border-slate-200 max-w-md w-full">
+      <div className="flex justify-center mb-6">
+        <div className="bg-indigo-600 p-4 rounded-xl shadow-lg">
+          <Lock className="w-8 h-8 text-white" />
+        </div>
+      </div>
+      <h2 className="text-xl font-bold text-center mb-2 text-slate-900">重新設定新密碼</h2>
+      <p className="text-slate-500 text-center mb-8 text-sm">修改後系統將自動登出，請使用新密碼重新登入</p>
+
+      <form onSubmit={handleSubmit} className="space-y-5">
+        <div>
+          <label className="block text-xs font-bold text-slate-500 uppercase mb-2">新密碼</label>
+          <input 
+            type="password" 
+            value={newPass} onChange={e => setNewPass(e.target.value)}
+            disabled={submitting}
+            className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none disabled:opacity-50"
+            placeholder="輸入新密碼" required
+          />
+          <p className="text-[10px] text-slate-400 mt-1 ml-1 font-medium">※ 須至少 6 個英、數字；不限大小寫</p>
+        </div>
+        <div>
+          <label className="block text-xs font-bold text-slate-500 uppercase mb-2">確認新密碼</label>
+          <input 
+            type="password" 
+            value={confirmPass} onChange={e => setConfirmPass(e.target.value)}
+            disabled={submitting}
+            className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none disabled:opacity-50"
+            placeholder="再次輸入新密碼" required
+          />
+        </div>
+        {error && <p className="text-red-500 text-xs mt-2 flex items-center gap-1 font-bold"><AlertCircle className="w-3 h-3" /> {error}</p>}
+        <button 
+          disabled={submitting}
+          className="w-full bg-indigo-600 text-white py-4 rounded-xl font-bold hover:bg-indigo-700 transition-all disabled:bg-slate-400"
+        >
+          {submitting ? '密碼修改中...' : '確認修改密碼'}
+        </button>
+      </form>
+    </motion.div>
+  );
+}
 
 function UserManagementView({ 
   users, 
