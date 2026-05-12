@@ -150,6 +150,8 @@ export default function App() {
   const handleLogout = React.useCallback(() => {
     setIsAuthenticated(false);
     setCurrentUser(null);
+    setUsernameInput('');
+    setPasswordInput('');
     localStorage.removeItem('hr_session_user');
     setAllCandidates([]);
     setAllRecords([]);
