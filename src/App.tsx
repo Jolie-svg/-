@@ -61,7 +61,7 @@ export default function App() {
 
   // User Management State
   const [users, setUsers] = useState<UserAccount[]>([]);
-  const [activeTab, setActiveTab] = useState<'search' | 'admin' | 'password'>('search');
+  const [activeTab, setActiveTab] = useState<'search' | 'admin' | 'password' | 'success'>('search');
 
   // Data State
   const [allCandidates, setAllCandidates] = useState<Candidate[]>([]);
@@ -147,7 +147,7 @@ export default function App() {
     }, 800);
   };
 
-  const handleLogout = () => {
+  const handleLogout = React.useCallback(() => {
     setIsAuthenticated(false);
     setCurrentUser(null);
     localStorage.removeItem('hr_session_user');
@@ -155,7 +155,7 @@ export default function App() {
     setAllRecords([]);
     setSelectedCandidate(null);
     setActiveTab('search');
-  };
+  }, []);
 
   const addUser = (name: string, pass: string) => {
     if (users.some(u => u.username === name)) {
@@ -189,10 +189,9 @@ export default function App() {
     ));
   };
 
-  const changePassword = (newPass: string) => {
+  const changePassword = React.useCallback((newPass: string) => {
     if (!currentUser) return;
     
-    // 先更新資料
     const updatedUsers = users.map(u => 
       u.id === currentUser.id ? { ...u, password: newPass } : u
     );
@@ -200,12 +199,8 @@ export default function App() {
     setUsers(updatedUsers);
     localStorage.setItem('hr_users', JSON.stringify(updatedUsers));
     
-    // 延遲執行以確保使用者能看到彈窗並完成狀態切換
-    setTimeout(() => {
-      alert('已修改完成');
-      handleLogout();
-    }, 100);
-  };
+    setActiveTab('success');
+  }, [currentUser, users]);
 
   const fetchDataFromSheets = async () => {
     setLoading(true);
@@ -596,6 +591,10 @@ export default function App() {
               rawRowCount={rawRowCount}
             />
           </div>
+        ) : activeTab === 'success' ? (
+          <div className="md:col-span-12 flex justify-center py-10">
+            <PasswordSuccessView onFinish={handleLogout} />
+          </div>
         ) : (
           <div className="md:col-span-12 flex justify-center py-10">
             <ChangePasswordView onUpdate={changePassword} />
@@ -607,6 +606,39 @@ export default function App() {
 }
 
 // --- Sub-components ---
+
+function PasswordSuccessView({ onFinish }: { onFinish: () => void }) {
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      onFinish();
+    }, 2000);
+    return () => clearTimeout(timer);
+  }, [onFinish]);
+
+  return (
+    <motion.div 
+      initial={{ opacity: 0, scale: 0.95 }} 
+      animate={{ opacity: 1, scale: 1 }} 
+      className="bg-white p-12 rounded-2xl shadow-xl border border-slate-200 max-w-md w-full text-center"
+    >
+      <div className="flex justify-center mb-6">
+        <div className="bg-emerald-500 p-4 rounded-full shadow-lg shadow-emerald-100">
+          <ShieldCheck className="w-10 h-10 text-white" />
+        </div>
+      </div>
+      <h2 className="text-2xl font-bold text-slate-900 mb-2">已修改完成</h2>
+      <p className="text-slate-500 mb-8">密碼已成功更新，正在跳轉至登入頁面...</p>
+      <div className="w-full bg-slate-100 h-1 rounded-full overflow-hidden">
+        <motion.div 
+          initial={{ width: "0%" }} 
+          animate={{ width: "100%" }} 
+          transition={{ duration: 2, ease: "linear" }}
+          className="bg-emerald-500 h-full"
+        />
+      </div>
+    </motion.div>
+  );
+}
 
 function ChangePasswordView({ onUpdate }: { onUpdate: (pass: string) => void }) {
   const [newPass, setNewPass] = useState('');
