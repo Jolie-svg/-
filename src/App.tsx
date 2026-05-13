@@ -343,11 +343,7 @@ export default function App() {
     // Memory-only filtering
     setTimeout(() => {
       const results = allCandidates.filter(c => {
-        const nameMatch = c.name.includes(searchName.trim());
-        const birthMatch = searchBirthday 
-          ? c.birthday === searchBirthday.replace(/-/g, '/')
-          : true;
-        return nameMatch && birthMatch;
+        return c.name.includes(searchName.trim());
       });
 
       setSearchResults(results);
@@ -476,16 +472,15 @@ export default function App() {
           <section className="bg-white p-7 rounded-2xl border border-slate-200 shadow-sm">
             <h2 className="text-lg font-bold mb-6 flex items-center gap-2 text-slate-800"><Search className="w-5 h-5 text-indigo-600" /> 人才檢索</h2>
             <form onSubmit={handleSearch} className="space-y-4">
-              <input 
-                type="text" value={searchName} onChange={e => setSearchName(e.target.value)}
-                placeholder="應徵者姓名"
-                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg outline-none"
-              />
-              <input 
-                type="date" value={searchBirthday} onChange={e => setSearchBirthday(e.target.value)}
-                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg outline-none uppercase"
-              />
-              <button disabled={isSearching} className="w-full bg-indigo-600 text-white font-bold py-4 rounded-lg hover:bg-indigo-700 transition-all flex items-center justify-center gap-2">
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase mb-1 ml-1">應徵者姓名</label>
+                <input 
+                  type="text" value={searchName} onChange={e => setSearchName(e.target.value)}
+                  placeholder="請輸入姓名"
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+              <button disabled={isSearching} className="w-full bg-indigo-600 text-white font-bold py-4 rounded-lg hover:bg-indigo-700 transition-all flex items-center justify-center gap-2 mt-2">
                 {isSearching ? <Clock className="animate-spin w-4 h-4" /> : '開始安全查詢'}
               </button>
             </form>
@@ -504,7 +499,7 @@ export default function App() {
                   className={`w-full px-6 py-5 flex items-center justify-between hover:bg-slate-50 transition-colors text-left group ${selectedCandidate?.id === c.id ? 'bg-indigo-50/50' : ''}`}
                 >
                   <div>
-                    <p className="font-bold text-slate-800">{c.name}</p>
+                    <p className="font-bold text-slate-800">姓名：{c.name}</p>
                     <p className="text-xs text-slate-400 font-mono mt-1">生日：{c.birthday}</p>
                   </div>
                   <ChevronRight className={`w-5 h-5 text-slate-300 group-hover:text-indigo-600 transition-all ${selectedCandidate?.id === c.id ? 'translate-x-1' : ''}`} />
@@ -528,7 +523,7 @@ export default function App() {
                 <div className="bg-white border border-slate-200 rounded-2xl p-8 flex items-center gap-6 shadow-sm">
                   <div className="w-16 h-16 bg-slate-100 rounded-2xl flex items-center justify-center text-indigo-600 border border-slate-200"><User className="w-8 h-8" /></div>
                   <div>
-                    <h2 className="text-2xl font-bold text-slate-900">{selectedCandidate.name}</h2>
+                    <h2 className="text-2xl font-bold text-slate-900">姓名：{selectedCandidate.name}</h2>
                     <p className="text-xs font-bold text-slate-400 flex items-center gap-1 uppercase tracking-tighter mt-1">
                       <Calendar className="w-3 h-3" /> 生日：{selectedCandidate.birthday}
                     </p>
