@@ -7,25 +7,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(405).json({ error: 'Method Not Allowed' });
   }
 
-  let { sheetId } = req.body;
+  // 取得所有可能的 Sheet ID
+  const sheetIds: string[] = [];
   
-  // 優先使用伺服器端環境變數中的 Sheet ID
+  // 1. 優先查看環境變數中的特定名稱
+  if (process.env.GOOGLE_SHEET_ID) sheetIds.push(process.env.GOOGLE_SHEET_ID);
+  if (process.env['店家面試委員排班']) sheetIds.push(process.env['店家面試委員排班'] as string);
+  
+  // 2. 如果請求中有傳入單一 ID
+  if (req.body.sheetId) {
+    sheetIds.push(req.body.sheetId);
+  }
+
+  // 如果都沒有，才使用預設
   const DEFAULT_SHEET_ID = '1syQgXhAwQV2DLn54gRjsNG1NTLAR59g5hBKzJDK6uh8';
-  const googleSheetIdFromEnv = process.env.GOOGLE_SHEET_ID;
-  
-  if (googleSheetIdFromEnv && googleSheetIdFromEnv.trim() !== '') {
-    sheetId = googleSheetIdFromEnv.trim();
-  } else if (!sheetId || sheetId.trim() === '') {
-    sheetId = DEFAULT_SHEET_ID;
+  if (sheetIds.length === 0) {
+    sheetIds.push(DEFAULT_SHEET_ID);
   }
 
-  if (!sheetId) {
-    return res.status(400).json({ error: 'Missing sheetId' });
-  }
-
-  // Extract ID if a full URL was provided
-  const match = sheetId.match(/\/d\/([^/]+)/);
-  if (match) sheetId = match[1];
+  // 去重並過濾空值
+  const uniqueSheetIds = [...new Set(sheetIds.filter(id => id && id.trim() !== ''))];
 
   // 取得環境變數
   const clientEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
@@ -59,17 +60,100 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
 
     const sheets = google.sheets({ version: "v4", auth });
-    const range = "A:Z"; 
+    const range = "A:ZZ"; // 擴大抓取範圍到 ZZ 欄位，避免後端欄位被截斷
 
-    const response = await sheets.spreadsheets.values.get({
-      spreadsheetId: sheetId,
-      range: range,
-    });
+    const results = [];
+    const specialSheetEnvValue = process.env['店家面試委員排班'];
+    let specialSheetId = specialSheetEnvValue;
+    if (specialSheetId) {
+      const sMatch = specialSheetId.match(/\/d\/([^/]+)/);
+      if (sMatch) specialSheetId = sMatch[1];
+    }
 
-    const rows = response.data.values || [];
+    for (const sheetId of uniqueSheetIds) {
+      try {
+        let cleanId = sheetId;
+        const match = cleanId.match(/\/d\/([^/]+)/);
+        if (match) cleanId = match[1];
+
+        // 決定讀取的範圍/頁籤
+        let fetchRange = range;
+        let sheetType = 'default';
+
+        if (cleanId === specialSheetId) {
+          try {
+            // 先嘗試取得試算表資訊，確認頁籤名稱
+            const spreadsheet = await sheets.spreadsheets.get({ spreadsheetId: cleanId });
+            const sheetNames = spreadsheet.data.sheets?.map(s => s.properties?.title) || [];
+            console.log(`Available sheets in ${cleanId}:`, sheetNames);
+            
+            // 尋找最接近的名稱
+            const exactMatch = sheetNames.find(n => n === '面試結果通知(新)');
+            const fuzzyMatch = sheetNames.find(n => n?.includes('面試結果通知'));
+            
+            if (exactMatch) {
+              fetchRange = `'${exactMatch}'!A:ZZ`;
+              sheetType = 'interview_results';
+            } else if (fuzzyMatch) {
+              fetchRange = `'${fuzzyMatch}'!A:ZZ`;
+              sheetType = 'interview_results';
+              console.log(`Fuzzy matched sheet name: ${fuzzyMatch}`);
+            }
+          } catch (e) {
+            console.error("Error getting sheet metadata:", e);
+            // 即使獲取資訊失敗，還是依照原定計畫嘗試
+            fetchRange = "'面試結果通知(新)'!A:ZZ";
+            sheetType = 'interview_results';
+          }
+        }
+
+        console.log(`Fetching sheet: ${cleanId} (Type: ${sheetType}, Range: ${fetchRange})`);
+
+        const response = await sheets.spreadsheets.values.get({
+          spreadsheetId: cleanId,
+          range: fetchRange,
+        });
+
+        results.push({
+          sheetId: cleanId,
+          sheetType: sheetType,
+          range: fetchRange,
+          rows: response.data.values || []
+        });
+      } catch (err: any) {
+        console.error(`Error fetching sheet ${sheetId}:`, err.message);
+        // 如果指定頁籤讀取失敗，嘗試讀取預設範圍
+        if (err.message.includes('not found') || err.message.includes('A1 notation')) {
+           try {
+             let cleanId = sheetId;
+             const match = cleanId.match(/\/d\/([^/]+)/);
+             if (match) cleanId = match[1];
+
+             const fallbackResponse = await sheets.spreadsheets.values.get({
+               spreadsheetId: cleanId,
+               range: "A:ZZ",
+             });
+             results.push({
+               sheetId: cleanId,
+               sheetType: 'default',
+               range: 'A:ZZ',
+               rows: fallbackResponse.data.values || []
+             });
+           } catch (fallbackErr) {
+             console.error(`Fallback failed for ${sheetId}`);
+           }
+        }
+      }
+    }
+
+    // 將所有列合併成一個大陣列，以保持與前端舊邏輯的相容性 (如果前端沒準備好處理多個 dataset)
+    // 但我們也回傳一個 results 陣列供現代前端使用
+    const allRows = results.flatMap(r => r.rows);
+
     return res.status(200).json({ 
-      rowCount: rows.length,
-      rows: rows
+      rowCount: allRows.length,
+      rows: allRows,
+      results: results
     });
   } catch (error: any) {
     console.error("Google API Error:", error);

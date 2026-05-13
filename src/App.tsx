@@ -210,7 +210,7 @@ export default function App() {
       const response = await fetch('/api/sync-sheets', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ }) // Server will use GOOGLE_SHEET_ID from env
+        body: JSON.stringify({ }) // Server will use GOOGLE_SHEET_ID and other envs
       });
       
       const contentType = response.headers.get('content-type');
@@ -226,10 +226,50 @@ export default function App() {
         throw new Error(errorMsg);
       }
 
-      const data = await response.json();
-      const allRows = data.rows as string[][];
-      setRawRowCount(allRows?.length || 0);
-      parseSheetData(allRows);
+    const data = await response.json();
+      
+      let combinedCandidates: Candidate[] = [];
+      let combinedRecords: Record[] = [];
+      let totalRaw = 0;
+
+      if (data.results && Array.isArray(data.results) && data.results.length > 0) {
+        // 多表處理
+        const candMap = new Map<string, Candidate>();
+        const recList: Record[] = [];
+        
+        data.results.forEach((sheetResult: any) => {
+          totalRaw += sheetResult.rows?.length || 0;
+          const { candidates, records } = parseSheetData(sheetResult.rows, sheetResult.sheetType || 'default');
+          
+          // 合併 Candidate (避免重複)
+          candidates.forEach(c => {
+            if (!candMap.has(c.id)) candMap.set(c.id, c);
+          });
+          
+          // 合併 Records
+          recList.push(...records);
+        });
+
+        combinedCandidates = Array.from(candMap.values());
+        combinedRecords = recList;
+      } else if (data.rows) {
+        // 後端相容邏輯 (單一陣列)
+        const allRows = data.rows as string[][];
+        totalRaw = allRows?.length || 0;
+        const { candidates, records } = parseSheetData(allRows, 'default');
+        combinedCandidates = candidates;
+        combinedRecords = records;
+      }
+
+      setRawRowCount(totalRaw);
+      setAllCandidates(combinedCandidates);
+      setAllRecords(combinedRecords);
+
+      if (combinedCandidates.length === 0) {
+        alert('同步完成，但未發現任何應徵者資料。請檢查試算表是否為空或標題列設定正確。');
+      } else {
+        console.log(`Sync success: ${combinedCandidates.length} candidates loaded.`);
+      }
     } catch (err) {
       console.error("Sync Error:", err);
       alert('同步資料失敗：' + (err as Error).message);
@@ -238,10 +278,9 @@ export default function App() {
     }
   };
 
-  const parseSheetData = (allRows: string[][]) => {
+  const parseSheetData = (allRows: string[][], sheetType: string): { candidates: Candidate[], records: Record[] } => {
     if (!allRows || allRows.length === 0) {
-      console.warn("No rows received from sheet");
-      return;
+      return { candidates: [], records: [] };
     }
 
     // Find headers by looking for "姓名" or "Name" in the first 50 rows
@@ -253,10 +292,17 @@ export default function App() {
     let notesIdx = -1;
     let dateIdx = -1;
 
+    // 尋找標題列
     for (let i = 0; i < Math.min(allRows.length, 50); i++) {
       const row = allRows[i].map(c => c?.toString().trim() || '');
-      // Look for a column that looks like "Name"
-      const nIdx = row.findIndex(h => h.includes('姓名') || h.toLowerCase() === 'name');
+      // Look for a column that looks like "Name" - more flexible match
+      const nIdx = row.findIndex(h => 
+        h === '姓名' || 
+        h.includes('姓名') || 
+        h.toLowerCase() === 'name' || 
+        h.toLowerCase().includes('candidate')
+      );
+      
       if (nIdx !== -1) {
         headerRowIndex = i;
         nameIdx = nIdx;
@@ -270,10 +316,19 @@ export default function App() {
       }
     }
 
-    if (headerRowIndex === -1 || nameIdx === -1) {
-      console.error("Could not find '姓名' column in the first 50 rows. Raw first row:", allRows[0]);
-      alert('解析失敗：找不到「姓名」欄位，請檢查試算表標題是否正確（需包含「姓名」二字）。');
-      return;
+    // --- 強制設定邏輯 ---
+    // 使用者要求：對於特定面試表，姓名「強制」對照 D 欄位 (index 3)
+    if (sheetType === 'interview_results') {
+      nameIdx = 3; 
+      // 如果沒找到標題列，我們維持 -1 (表示從 row 0 開始當資料)；
+      // 如果找到了，則 headerRowIndex 就會是標題列的那一列
+      console.log(`[InterviewResults] Forced Column D for names. Header found at row: ${headerRowIndex === -1 ? 'None (starting from 0)' : headerRowIndex}`);
+    }
+
+    if (headerRowIndex === -1 && nameIdx === -1) {
+       // 非面試表且找不到標題列
+       console.warn("Could not find '姓名' column in this sheet. sheetType:", sheetType, "First row sample:", allRows[0]?.slice(0, 5));
+       return { candidates: [], records: [] };
     }
 
     // Default if birthIdx not found: try next column after name
@@ -284,66 +339,69 @@ export default function App() {
 
     const norm = (s: string) => s.toLowerCase().trim().replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, '');
 
-    let skippedCount = 0;
-    allRows.slice(headerRowIndex + 1).forEach((row, rowIndex) => {
+    // 如果 headerRowIndex 是 -1，表示沒有標題列，資料從 0 開始
+    const dataRows = headerRowIndex === -1 ? allRows : allRows.slice(headerRowIndex + 1);
+
+    dataRows.forEach((row, rowIndex) => {
       const name = row[nameIdx]?.trim();
       let birthday = row[birthIdx]?.trim() || '';
       
-      // If name is missing, we definitely skip
       if (!name || name === '姓名' || name === 'Name') {
-        skippedCount++;
         return;
       }
 
-      // Format Birthday to YYYY/MM/DD if present
-      if (birthday) {
-        birthday = birthday.replace(/[-\.]/g, '/');
-        const parts = birthday.split('/');
-        if (parts.length === 3) {
-          birthday = `${parts[0]}/${parts[1].padStart(2, '0')}/${parts[2].padStart(2, '0')}`;
-        }
-      }
+      const candName = name;
+      const candId = `c-${norm(candName)}-${norm(birthday)}`;
 
-      const candId = `c-${norm(name)}-${norm(birthday)}`;
       if (!candidatesMap.has(candId)) {
-        candidatesMap.set(candId, { id: candId, name, birthday: birthday || '未設定' });
+        candidatesMap.set(candId, { id: candId, name: candName, birthday: birthday || '未設定' });
       }
 
-      const result = resultIdx !== -1 ? (row[resultIdx]?.trim() || '未知') : '未知';
+      // 提取結果：如果找不到標題，試著抓取姓名後面的欄位
+      const resultValue = resultIdx !== -1 ? row[resultIdx] : (row[nameIdx+1] || row[nameIdx+2]);
+      const result = resultValue?.trim() || '未知';
+      
       const reason = reasonIdx !== -1 ? (row[reasonIdx]?.trim() || '') : '';
       const notes = notesIdx !== -1 ? (row[notesIdx]?.trim() || '') : '';
-      const date = dateIdx !== -1 ? (row[dateIdx]?.trim() || new Date().toISOString().split('T')[0]) : new Date().toISOString().split('T')[0];
+      const date = dateIdx !== -1 ? (row[dateIdx]?.trim() || '') : '';
+      
       const type = (result.includes('離職') || result.includes('曾任')) ? 'employment' : 'interview';
 
       recordsList.push({
-        id: `r-${rowIndex}-${candId}`,
+        id: `r-${rowIndex}-${candId}-${Math.random().toString(36).substr(2, 5)}`,
         candidateId: candId,
         type,
-        date,
+        date: date || new Date().toISOString().split('T')[0],
         result,
         reason,
         notes
       });
     });
 
-    console.log(`Parse complete. Total rows: ${allRows.length}, Skipped: ${skippedCount}, Candidates: ${candidatesMap.size}, Records: ${recordsList.length}`);
+    console.log(`Parsed ${sheetType}: Found ${candidatesMap.size} candidates`);
 
-    setAllCandidates(Array.from(candidatesMap.values()));
-    setAllRecords(recordsList);
-    
-    if (candidatesMap.size === 0) {
-      alert('解析成功，但沒有找到任何應徵者資料。請檢查標題列下方是否有內容。');
-    }
+    return { 
+      candidates: Array.from(candidatesMap.values()), 
+      records: recordsList 
+    };
   };
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!searchName.trim()) {
+      alert('請輸入姓名');
+      return;
+    }
+
     setIsSearching(true);
     
-    // Memory-only filtering
+    // Fuzzy matching: ignore case and spaces
+    const query = searchName.trim().toLowerCase().replace(/\s+/g, '');
+    
     setTimeout(() => {
       const results = allCandidates.filter(c => {
-        return c.name.includes(searchName.trim());
+        const targetName = c.name.toLowerCase().replace(/\s+/g, '');
+        return targetName.includes(query) || query.includes(targetName);
       });
 
       setSearchResults(results);
