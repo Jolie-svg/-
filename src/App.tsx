@@ -293,11 +293,18 @@ export default function App() {
               
               if (c.isResigned) {
                 updated.isResigned = true;
-                // 只有當新值不為空時才覆蓋，避免被同一張表的不同列（可能缺漏資訊）洗掉
-                if (c.resignationType) updated.resignationType = c.resignationType;
-                if (c.onboardDate) updated.onboardDate = c.onboardDate;
-                if (c.resignationDate) updated.resignationDate = c.resignationDate;
-                if (c.resignationReason) updated.resignationReason = c.resignationReason;
+                if (!updated.resignations) updated.resignations = [];
+                if (c.resignations && c.resignations.length > 0) {
+                  // 合併離職紀錄，確保不重複 (簡單判斷如果有不同日期或是原因)
+                  c.resignations.forEach(newRes => {
+                    const exists = updated.resignations?.some(old => 
+                      old.onboardDate === newRes.onboardDate && old.resignationDate === newRes.resignationDate
+                    );
+                    if (!exists) {
+                      updated.resignations?.push(newRes);
+                    }
+                  });
+                }
               }
               candMap.set(existingId, updated);
             }

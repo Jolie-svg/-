@@ -87,19 +87,50 @@ async function startServer() {
         if (match) sheetId = match[1];
 
         try {
-          const range = "A:ZZ"; // Wide range
-          const response = await sheets.spreadsheets.values.get({
+          // 如果是主試算表，我們嘗試抓取多個範圍：一個是預設(主表)，一個是離職匯整表
+          const ranges = [
+            "A:ZZ", // 預設工作表
+            "'離職名單匯整2021.10~'!A:ZZ" // 指定的離職匯整頁籤
+          ];
+
+          const response = await sheets.spreadsheets.values.batchGet({
             spreadsheetId: sheetId,
-            range: range,
+            ranges: ranges,
           });
 
+          const valueRanges = response.data.valueRanges || [];
+          
+          // 第一個範圍當作主表 (Interview)
           results.push({
             sheetId: sheetId,
             envKey: config.envKey,
-            rows: response.data.values || []
+            rows: valueRanges[0]?.values || []
           });
+
+          // 第二個範圍如果有資料，當作離職表 (Sheet3)
+          if (valueRanges[1]?.values && valueRanges[1].values.length > 0) {
+            results.push({
+              sheetId: sheetId,
+              envKey: 'SHEET_3', // 強制標記為 SHEET_3 讓前端處理
+              rows: valueRanges[1].values
+            });
+          }
         } catch (err: any) {
           console.error(`Error fetching sheet ${sheetId} (${config.envKey}):`, err.message);
+          // 如果讀取特定頁籤失敗（例如不存在），則退而求其次只讀取主表
+          try {
+            const response = await sheets.spreadsheets.values.get({
+              spreadsheetId: sheetId,
+              range: "A:ZZ",
+            });
+            results.push({
+              sheetId: sheetId,
+              envKey: config.envKey,
+              rows: response.data.values || []
+            });
+          } catch (innerErr: any) {
+             console.error(`Fallback fetch failed for ${sheetId}:`, innerErr.message);
+          }
         }
       }
 
