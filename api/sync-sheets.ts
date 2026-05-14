@@ -10,14 +10,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // 取得所有可能的 Sheet ID
   const sheetConfigs: { id: string, envKey: string }[] = [];
   
-  // 1. 自動從環境變數抓取所有包含 "SHEET"、"試算表" 或 "GOOGLE_ID" 字樣的 ID
-  Object.keys(process.env).forEach(key => {
-    const upperKey = key.toUpperCase();
-    if (upperKey.includes('SHEET') || upperKey.includes('試算表') || upperKey.includes('GOOGLE_ID') || key === '店家面試委員排班') {
-      const val = process.env[key];
-      if (val && val.trim() !== '') {
-        sheetConfigs.push({ id: val.trim(), envKey: key });
-      }
+  // 1. Collect from environment variables - specifying keys to avoid picking up API keys
+  const allowedEnvKeys = ['GOOGLE_SHEET_ID', 'SHEET_3', '店家面試委員排班'];
+  allowedEnvKeys.forEach(key => {
+    const val = process.env[key];
+    if (val && val.trim() !== '' && !val.startsWith('AIzaSy')) {
+      sheetConfigs.push({ id: val.trim(), envKey: key });
     }
   });
   
@@ -129,6 +127,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           range: fetchRange,
           rows: response.data.values || []
         });
+
+        // 如果是主表 ID，額外嘗試讀取特定的離職頁籤 (原本的 SHEET_3 資料)
+        if (envKey === 'GOOGLE_SHEET_ID') {
+          try {
+            const resResponse = await sheets.spreadsheets.values.get({
+              spreadsheetId: cleanId,
+              range: "'離職名單匯整2021.10~'!A:ZZ",
+            });
+            if (resResponse.data.values && resResponse.data.values.length > 0) {
+              results.push({
+                sheetId: cleanId,
+                envKey: 'SHEET_3', // 標記為 SHEET_3 讓前端邏輯保持一致
+                sheetType: 'resignation_list',
+                range: "'離職名單匯整2021.10~'!A:ZZ",
+                rows: resResponse.data.values
+              });
+            }
+          } catch (resErr: any) {
+            console.log(`Note: Optional tab '離職名單匯整2021.10~' not found in ${cleanId}`);
+          }
+        }
       } catch (err: any) {
         console.error(`Error fetching sheet ${sheetId}:`, err.message);
         // 如果指定頁籤讀取失敗，嘗試讀取預設範圍
