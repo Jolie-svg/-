@@ -8,25 +8,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   // 取得所有可能的 Sheet ID
-  const sheetIds: string[] = [];
+  const sheetConfigs: { id: string, envKey: string }[] = [];
   
-  // 1. 優先查看環境變數中的特定名稱
-  if (process.env.GOOGLE_SHEET_ID) sheetIds.push(process.env.GOOGLE_SHEET_ID);
-  if (process.env['店家面試委員排班']) sheetIds.push(process.env['店家面試委員排班'] as string);
+  // 1. 自動從環境變數抓取所有包含 "SHEET"、"試算表" 或 "GOOGLE_ID" 字樣的 ID
+  Object.keys(process.env).forEach(key => {
+    const upperKey = key.toUpperCase();
+    if (upperKey.includes('SHEET') || upperKey.includes('試算表') || upperKey.includes('GOOGLE_ID') || key === '店家面試委員排班') {
+      const val = process.env[key];
+      if (val && val.trim() !== '') {
+        sheetConfigs.push({ id: val.trim(), envKey: key });
+      }
+    }
+  });
   
   // 2. 如果請求中有傳入單一 ID
   if (req.body.sheetId) {
-    sheetIds.push(req.body.sheetId);
+    sheetConfigs.push({ id: req.body.sheetId, envKey: 'request_body' });
   }
 
   // 如果都沒有，才使用預設
   const DEFAULT_SHEET_ID = '1syQgXhAwQV2DLn54gRjsNG1NTLAR59g5hBKzJDK6uh8';
-  if (sheetIds.length === 0) {
-    sheetIds.push(DEFAULT_SHEET_ID);
+  if (sheetConfigs.length === 0) {
+    sheetConfigs.push({ id: DEFAULT_SHEET_ID, envKey: 'default' });
   }
 
-  // 去重並過濾空值
-  const uniqueSheetIds = [...new Set(sheetIds.filter(id => id && id.trim() !== ''))];
+  // 去重
+  const uniqueConfigs = sheetConfigs.filter((v, i, a) => a.findIndex(t => t.id === v.id) === i);
 
   // 取得環境變數
   const clientEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
@@ -70,7 +77,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (sMatch) specialSheetId = sMatch[1];
     }
 
-    for (const sheetId of uniqueSheetIds) {
+    for (const config of uniqueConfigs) {
+      const { id: sheetId, envKey } = config;
       try {
         let cleanId = sheetId;
         const match = cleanId.match(/\/d\/([^/]+)/);
@@ -116,6 +124,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         results.push({
           sheetId: cleanId,
+          envKey: envKey,
           sheetType: sheetType,
           range: fetchRange,
           rows: response.data.values || []
@@ -135,6 +144,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
              });
              results.push({
                sheetId: cleanId,
+               envKey: envKey,
                sheetType: 'default',
                range: 'A:ZZ',
                rows: fallbackResponse.data.values || []

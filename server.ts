@@ -25,64 +25,48 @@ async function startServer() {
     res.json({ status: "ok", timestamp: new Date().toISOString() });
   });
 
-    // Google Sheets Sync Proxy
+  // Google Sheets Sync Proxy
   app.post("/api/sync-sheets", async (req, res) => {
     console.log("POST /api/sync-sheets received", req.body);
-    let { sheetId } = req.body;
     
-    // 優先使用伺服器端環境變數中的 Sheet ID 以提高安全性
+    // Collect all sheet configs from env and request
+    const sheetConfigs: { id: string, envKey: string }[] = [];
+    
+    // 1. Collect from environment variables
+    Object.keys(process.env).forEach(key => {
+      const val = process.env[key];
+      if (val && val.trim() !== '') {
+        const upperKey = key.toUpperCase();
+        if (upperKey.includes('SHEET') || upperKey.includes('GOOGLE_ID') || key === '店家面試委員排班') {
+          sheetConfigs.push({ id: val.trim(), envKey: key });
+        }
+      }
+    });
+    
+    // 2. Default fallback if nothing found
     const DEFAULT_SHEET_ID = '1syQgXhAwQV2DLn54gRjsNG1NTLAR59g5hBKzJDK6uh8';
-    const googleSheetIdFromEnv = process.env.GOOGLE_SHEET_ID;
-    
-    // 決定最終使用的 ID
-    if (googleSheetIdFromEnv && googleSheetIdFromEnv.trim() !== '') {
-      sheetId = googleSheetIdFromEnv.trim();
-      console.log("Using sheetId from GOOGLE_SHEET_ID env");
-    } else if (sheetId && sheetId.trim() !== '') {
-      console.log("Using sheetId from Request Body");
-    } else {
-      sheetId = DEFAULT_SHEET_ID;
-      console.log("Using Default Fallback sheetId");
+    if (sheetConfigs.length === 0) {
+      sheetConfigs.push({ id: DEFAULT_SHEET_ID, envKey: 'GOOGLE_SHEET_ID' });
     }
 
-    if (!sheetId) {
-      console.error("Critical: sheetId is still missing after all fallbacks");
-      return res.status(400).json({ error: "Missing sheetId. Please set GOOGLE_SHEET_ID in environment variables." });
-    }
-
-    // Extract ID if a full URL was provided
-    const match = sheetId.match(/\/d\/([^/]+)/);
-    if (match) sheetId = match[1];
+    // De-duplicate
+    const uniqueConfigs = sheetConfigs.filter((v, i, a) => a.findIndex(t => t.id === v.id) === i);
 
     const clientEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-
     let privateKey = process.env.GOOGLE_PRIVATE_KEY;
+
     if (privateKey) {
       privateKey = privateKey
-        .replace(/\\n/g, '\n')       // 處理 "\\n"
-        .replace(/\n/g, '\n')        // 確保換行符號正確
-        .replace(/\r/g, '')          // 移除 \r
-        .replace(/^["']|["']$/g, '') // 移除頭尾引號
+        .replace(/\\n/g, '\n')
+        .replace(/\n/g, '\n')
+        .replace(/\r/g, '')
+        .replace(/^["']|["']$/g, '')
         .trim();
     }
 
-    console.log("Configuration check:", { 
-      hasEmail: !!clientEmail, 
-      hasKey: !!privateKey, 
-      keyLength: privateKey?.length,
-      finalSheetId: sheetId,
-      isUsingEnvId: !!process.env.GOOGLE_SHEET_ID
-    });
-
     if (!clientEmail || !privateKey || !privateKey.includes('-----BEGIN PRIVATE KEY-----')) {
-      console.error("Credentials error:", { 
-        email: !!clientEmail, 
-        keyExists: !!privateKey, 
-        hasHeader: privateKey?.includes('BEGIN'),
-        keyStart: privateKey?.substring(0, 30) 
-      });
       return res.status(500).json({ 
-        error: "伺服器環境變數設定錯誤。請檢查 GOOGLE_PRIVATE_KEY 是否包含完整標頭 (-----BEGIN PRIVATE KEY-----) 且無多餘轉義。" 
+        error: "伺服器環境變數設定錯誤。請檢查 GOOGLE_PRIVATE_KEY 是否包含完整標題。" 
       });
     }
 
@@ -94,20 +78,37 @@ async function startServer() {
       });
 
       const sheets = google.sheets({ version: "v4", auth });
-      const range = "A:Z"; 
-      
-      console.log(`Fetching from Google Sheets via Service Account for ID: ${sheetId}`);
-      
-      const response = await sheets.spreadsheets.values.get({
-        spreadsheetId: sheetId,
-        range: range,
-      });
+      const results: any[] = [];
 
-      const rows = response.data.values || [];
+      for (const config of uniqueConfigs) {
+        let sheetId = config.id;
+        // Extract ID if a full URL was provided
+        const match = sheetId.match(/\/d\/([^/]+)/);
+        if (match) sheetId = match[1];
+
+        try {
+          const range = "A:ZZ"; // Wide range
+          const response = await sheets.spreadsheets.values.get({
+            spreadsheetId: sheetId,
+            range: range,
+          });
+
+          results.push({
+            sheetId: sheetId,
+            envKey: config.envKey,
+            rows: response.data.values || []
+          });
+        } catch (err: any) {
+          console.error(`Error fetching sheet ${sheetId} (${config.envKey}):`, err.message);
+        }
+      }
+
+      const allRows = results.flatMap(r => r.rows);
       res.json({ 
         message: "Data synced successfully", 
-        rowCount: rows.length,
-        rows: rows
+        rowCount: allRows.length,
+        rows: allRows,
+        results: results
       });
     } catch (error: any) {
       console.error("Google Sheets API Error:", error);

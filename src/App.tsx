@@ -22,11 +22,29 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
+// 輔助函式：正規化姓名，移除空格與特殊字元，僅保留中文與英數字
+const normalizeVal = (s: any) => {
+  if (!s) return '';
+  return s.toString().toLowerCase().trim().replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, '');
+};
+
 // --- Types ---
+interface ResignationDetail {
+  resignationType?: string;
+  onboardDate?: string;
+  resignationDate?: string;
+  resignationReason?: string;
+}
+
 interface Candidate {
   id: string;
   name: string;
   birthday: string;
+  // GOOGLE_SHEET_ID 專用欄位
+  notes?: string;
+  // SHEET_3 專用欄位
+  isResigned?: boolean;
+  resignations?: ResignationDetail[];
 }
 
 interface Record {
@@ -204,6 +222,8 @@ export default function App() {
     setActiveTab('success');
   }, [currentUser, users]);
 
+  const norm = (s: string) => s.toLowerCase().trim().replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, '');
+
   const fetchDataFromSheets = async () => {
     setLoading(true);
     try {
@@ -239,11 +259,48 @@ export default function App() {
         
         data.results.forEach((sheetResult: any) => {
           totalRaw += sheetResult.rows?.length || 0;
-          const { candidates, records } = parseSheetData(sheetResult.rows, sheetResult.sheetType || 'default');
+          const { candidates, records } = parseSheetData(
+            sheetResult.rows, 
+            sheetResult.sheetType || 'default',
+            sheetResult.envKey
+          );
           
           // 合併 Candidate (避免重複)
           candidates.forEach(c => {
-            if (!candMap.has(c.id)) candMap.set(c.id, c);
+            // 使用正規化姓名與生日進行匹配
+            let existingId: string | undefined;
+            const normCName = normalizeVal(c.name);
+            
+            if (candMap.has(c.id)) {
+              existingId = c.id;
+            } else {
+              // 模糊匹配：如果正規化姓名相同，且至少一方生日是 "未設定" 或 生日完全相同
+              const sameNameCand = Array.from(candMap.values()).find(ex => 
+                normalizeVal(ex.name) === normCName && (ex.birthday === '未設定' || c.birthday === '未設定' || normalizeVal(ex.birthday) === normalizeVal(c.birthday))
+              );
+              if (sameNameCand) existingId = sameNameCand.id;
+            }
+
+            if (!existingId) {
+              candMap.set(c.id, c);
+            } else {
+              const existing = candMap.get(existingId)!;
+              const updated = { ...existing };
+              
+              // 優先保留有值的資料
+              if (updated.birthday === '未設定' && c.birthday !== '未設定') updated.birthday = c.birthday;
+              if (c.notes) updated.notes = c.notes;
+              
+              if (c.isResigned) {
+                updated.isResigned = true;
+                // 只有當新值不為空時才覆蓋，避免被同一張表的不同列（可能缺漏資訊）洗掉
+                if (c.resignationType) updated.resignationType = c.resignationType;
+                if (c.onboardDate) updated.onboardDate = c.onboardDate;
+                if (c.resignationDate) updated.resignationDate = c.resignationDate;
+                if (c.resignationReason) updated.resignationReason = c.resignationReason;
+              }
+              candMap.set(existingId, updated);
+            }
           });
           
           // 合併 Records
@@ -278,7 +335,7 @@ export default function App() {
     }
   };
 
-  const parseSheetData = (allRows: string[][], sheetType: string): { candidates: Candidate[], records: Record[] } => {
+  const parseSheetData = (allRows: string[][], sheetType: string, envKey?: string): { candidates: Candidate[], records: Record[] } => {
     if (!allRows || allRows.length === 0) {
       return { candidates: [], records: [] };
     }
@@ -292,20 +349,27 @@ export default function App() {
     let notesIdx = -1;
     let dateIdx = -1;
 
+    // SHEET_3 欄位
+    let resignTypeIdx = -1;
+    let onboardDateIdx = -1;
+    let resignDateIdx = -1;
+    let resignReasonIdx = -1;
+
+    const isSheet3 = envKey?.toUpperCase().includes('SHEET_3');
+    const isGoogleSheet = envKey?.toUpperCase().includes('GOOGLE_SHEET_ID');
+
     // 尋找標題列
     for (let i = 0; i < Math.min(allRows.length, 50); i++) {
       const row = allRows[i].map(c => c?.toString().trim() || '');
-      // Look for a column that looks like "Name" - more flexible match
-      const nIdx = row.findIndex(h => 
-        h === '姓名' || 
-        h.includes('姓名') || 
-        h.toLowerCase() === 'name' || 
-        h.toLowerCase().includes('candidate')
+      // 擴大標題搜尋範圍
+      const idx = row.findIndex(h => 
+        h.includes('姓名') || h.includes('Name') || h.includes('人才') || 
+        h.includes('應徵者') || h.includes('員工名稱') || h.includes('職員')
       );
       
-      if (nIdx !== -1) {
+      if (idx !== -1) {
         headerRowIndex = i;
-        nameIdx = nIdx;
+        nameIdx = idx;
         // Search for other headers in the same row
         birthIdx = row.findIndex(h => h.includes('生日') || h.includes('出生') || h.toLowerCase().includes('birth'));
         resultIdx = row.findIndex(h => h.includes('結果') || h.includes('狀態') || h.toLowerCase().includes('result') || h.toLowerCase().includes('status'));
@@ -316,45 +380,89 @@ export default function App() {
       }
     }
 
-    // --- 強制設定邏輯 ---
-    // 使用者要求：對於特定面試表，姓名「強制」對照 D 欄位 (index 3)
-    if (sheetType === 'interview_results') {
-      nameIdx = 3; 
-      // 如果沒找到標題列，我們維持 -1 (表示從 row 0 開始當資料)；
-      // 如果找到了，則 headerRowIndex 就會是標題列的那一列
-      console.log(`[InterviewResults] Forced Column D for names. Header found at row: ${headerRowIndex === -1 ? 'None (starting from 0)' : headerRowIndex}`);
+    // --- 強制設定邏輯 (確保符合使用者指定的特定欄位，蓋過自動偵測) ---
+    if (isGoogleSheet) {
+      nameIdx = 3; // D 欄位
+      notesIdx = 21; // V 欄位
+    }
+
+    if (isSheet3) {
+      nameIdx = 3; // D 欄位
+      resignTypeIdx = 0; // A 欄位
+      onboardDateIdx = 5; // F 欄位
+      resignDateIdx = 6; // G 欄位
+      resignReasonIdx = 9; // J 欄位
     }
 
     if (headerRowIndex === -1 && nameIdx === -1) {
-       // 非面試表且找不到標題列
-       console.warn("Could not find '姓名' column in this sheet. sheetType:", sheetType, "First row sample:", allRows[0]?.slice(0, 5));
+       // 找不到標題列也不在上述白名單中
+       console.warn("Could not find '姓名' column in this sheet. sheetType:", sheetType, "envKey:", envKey);
        return { candidates: [], records: [] };
     }
 
-    // Default if birthIdx not found: try next column after name
-    if (birthIdx === -1) birthIdx = nameIdx + 1;
+    // Default if birthIdx not found: try next column after name (except for Sheet3/GoogleSheet where we use absolute)
+    if (birthIdx === -1 && !isSheet3 && !isGoogleSheet) birthIdx = nameIdx + 1;
 
     const candidatesMap = new Map<string, Candidate>();
     const recordsList: Record[] = [];
 
-    const norm = (s: string) => s.toLowerCase().trim().replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, '');
-
-    // 如果 headerRowIndex 是 -1，表示沒有標題列，資料從 0 開始
-    const dataRows = headerRowIndex === -1 ? allRows : allRows.slice(headerRowIndex + 1);
+    // 如果 headerRowIndex 是 -1，表示沒有發現標題列，資料從 0 開始
+    // 否則從標題列下一列開始 (但強制指定的表可以放寬從 0 開始掃描)
+    const startIdx = (isSheet3 || isGoogleSheet) ? 0 : (headerRowIndex === -1 ? 0 : headerRowIndex + 1);
+    const dataRows = allRows.slice(startIdx);
 
     dataRows.forEach((row, rowIndex) => {
-      const name = row[nameIdx]?.trim();
-      let birthday = row[birthIdx]?.trim() || '';
-      
-      if (!name || name === '姓名' || name === 'Name') {
-        return;
-      }
+      const rawName = row[nameIdx]?.toString().trim();
+      // 跳過空值或標題文字
+      if (!rawName || rawName === '姓名' || rawName === 'Name' || rawName === '人材' || rawName === '應徵者' || rawName === '員工名稱') return;
 
-      const candName = name;
-      const candId = `c-${norm(candName)}-${norm(birthday)}`;
+      const candName = rawName;
+      // 生日：若 birthIdx 為 -1 則設為空
+      let birthday = (birthIdx !== -1 && row[birthIdx]) ? row[birthIdx].toString().trim() : '';
+      
+      const candId = `c-${normalizeVal(candName)}-${normalizeVal(birthday)}`;
 
       if (!candidatesMap.has(candId)) {
-        candidatesMap.set(candId, { id: candId, name: candName, birthday: birthday || '未設定' });
+        const candObj: Candidate = { id: candId, name: candName, birthday: birthday || '未設定' };
+        
+        if (isGoogleSheet) {
+          // 安全讀取 V 欄 (21)
+          if (notesIdx !== -1 && row.length > notesIdx) {
+            candObj.notes = row[notesIdx]?.toString().trim() || '';
+          }
+        }
+
+        if (isSheet3) {
+          candObj.isResigned = true;
+          candObj.resignations = [{
+            resignationType: (resignTypeIdx !== -1 && row.length > resignTypeIdx) ? row[resignTypeIdx]?.toString().trim() : '',
+            onboardDate: (onboardDateIdx !== -1 && row.length > onboardDateIdx) ? row[onboardDateIdx]?.toString().trim() : '',
+            resignationDate: (resignDateIdx !== -1 && row.length > resignDateIdx) ? row[resignDateIdx]?.toString().trim() : '',
+            resignationReason: (resignReasonIdx !== -1 && row.length > resignReasonIdx) ? row[resignReasonIdx]?.toString().trim() : ''
+          }];
+        }
+
+        candidatesMap.set(candId, candObj);
+      } else {
+        // 同一名稱在同一份表出現多次 (例如重複輸入或多筆紀錄)，保留「最後一筆有值的紀錄」
+        const existing = candidatesMap.get(candId)!;
+        
+        if (isGoogleSheet && notesIdx !== -1 && row.length > notesIdx) {
+          const notesVal = row[notesIdx]?.toString().trim();
+          if (notesVal) existing.notes = notesVal;
+        }
+
+        if (isSheet3) {
+          existing.isResigned = true;
+          if (!existing.resignations) existing.resignations = [];
+          
+          existing.resignations.push({
+            resignationType: (resignTypeIdx !== -1 && row.length > resignTypeIdx) ? row[resignTypeIdx]?.toString().trim() : '',
+            onboardDate: (onboardDateIdx !== -1 && row.length > onboardDateIdx) ? row[onboardDateIdx]?.toString().trim() : '',
+            resignationDate: (resignDateIdx !== -1 && row.length > resignDateIdx) ? row[resignDateIdx]?.toString().trim() : '',
+            resignationReason: (resignReasonIdx !== -1 && row.length > resignReasonIdx) ? row[resignReasonIdx]?.toString().trim() : ''
+          });
+        }
       }
 
       // 提取結果：如果找不到標題，試著抓取姓名後面的欄位
@@ -367,15 +475,17 @@ export default function App() {
       
       const type = (result.includes('離職') || result.includes('曾任')) ? 'employment' : 'interview';
 
-      recordsList.push({
-        id: `r-${rowIndex}-${candId}-${Math.random().toString(36).substr(2, 5)}`,
-        candidateId: candId,
-        type,
-        date: date || new Date().toISOString().split('T')[0],
-        result,
-        reason,
-        notes
-      });
+      if (!isSheet3) {
+        recordsList.push({
+          id: `r-${rowIndex}-${candId}-${Math.random().toString(36).substr(2, 5)}`,
+          candidateId: candId,
+          type,
+          date: date || new Date().toISOString().split('T')[0],
+          result,
+          reason,
+          notes
+        });
+      }
     });
 
     console.log(`Parsed ${sheetType}: Found ${candidatesMap.size} candidates`);
@@ -578,15 +688,66 @@ export default function App() {
           <AnimatePresence mode="wait">
             {selectedCandidate ? (
               <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-6 h-full flex flex-col">
-                <div className="bg-white border border-slate-200 rounded-2xl p-8 flex items-center gap-6 shadow-sm">
-                  <div className="w-16 h-16 bg-slate-100 rounded-2xl flex items-center justify-center text-indigo-600 border border-slate-200"><User className="w-8 h-8" /></div>
-                  <div>
-                    <h2 className="text-2xl font-bold text-slate-900">姓名：{selectedCandidate.name}</h2>
-                    <p className="text-xs font-bold text-slate-400 flex items-center gap-1 uppercase tracking-tighter mt-1">
-                      <Calendar className="w-3 h-3" /> 生日：{selectedCandidate.birthday}
-                    </p>
+                <div className="bg-white border border-slate-200 rounded-2xl p-8 flex flex-col md:flex-row md:items-center justify-between gap-6 shadow-sm">
+                  <div className="flex items-center gap-6">
+                    <div className="w-16 h-16 bg-slate-100 rounded-2xl flex items-center justify-center text-indigo-600 border border-slate-200"><User className="w-8 h-8" /></div>
+                    <div>
+                      <h2 className="text-2xl font-bold text-slate-900">姓名：{selectedCandidate.name}</h2>
+                      <p className="text-xs font-bold text-slate-400 flex items-center gap-1 uppercase tracking-tighter mt-1">
+                        <Calendar className="w-3 h-3" /> 生日：{selectedCandidate.birthday}
+                      </p>
+                    </div>
                   </div>
+                  
+                  {selectedCandidate.isResigned && (
+                    <div className="flex flex-wrap gap-2">
+                       <span className="px-3 py-1 bg-red-50 text-red-600 rounded-full text-[10px] font-bold border border-red-100 flex items-center gap-1">
+                         <AlertCircle className="w-3 h-3" /> 已出現在離職名單
+                       </span>
+                    </div>
+                  )}
                 </div>
+
+                {selectedCandidate.notes && (
+                  <motion.div initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} className="bg-indigo-50 border border-indigo-100 rounded-2xl p-6 shadow-sm">
+                    <h3 className="text-[10px] font-bold text-indigo-600 mb-2 flex items-center gap-2 uppercase tracking-widest">
+                      <MessageSquare className="w-4 h-4" /> 來自 GOOGLE_SHEET_ID 的備註
+                    </h3>
+                    <p className="text-sm font-medium text-slate-700 leading-relaxed italic">
+                      「{selectedCandidate.notes}」
+                    </p>
+                  </motion.div>
+                )}
+
+                {selectedCandidate.isResigned && selectedCandidate.resignations && selectedCandidate.resignations.length > 0 && (
+                  <motion.div initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} className="bg-white border-2 border-red-100 rounded-2xl p-8 shadow-sm">
+                    <h3 className="text-sm font-bold text-red-600 mb-6 flex items-center gap-2">
+                      <LogOut className="w-4 h-4" /> 離職明細 (SHEET_3)
+                    </h3>
+                    <div className="space-y-6">
+                      {selectedCandidate.resignations.map((res, idx) => (
+                        <div key={idx} className="grid grid-cols-2 md:grid-cols-4 gap-6 pb-6 border-b border-red-50 last:border-0 last:pb-0">
+                          <div className="space-y-1">
+                            <p className="text-[10px] font-bold text-slate-400 uppercase">離職類型</p>
+                            <p className="text-sm font-bold text-slate-800">{res.resignationType || '未填寫'}</p>
+                          </div>
+                          <div className="space-y-1">
+                            <p className="text-[10px] font-bold text-slate-400 uppercase">到職日</p>
+                            <p className="text-sm font-bold text-slate-800">{res.onboardDate || '未填寫'}</p>
+                          </div>
+                          <div className="space-y-1">
+                            <p className="text-[10px] font-bold text-slate-400 uppercase">離職日</p>
+                            <p className="text-sm font-bold text-slate-800">{res.resignationDate || '未填寫'}</p>
+                          </div>
+                          <div className="space-y-1">
+                            <p className="text-[10px] font-bold text-slate-400 uppercase">離職原因</p>
+                            <p className="text-sm font-bold text-slate-800">{res.resignationReason || '未填寫'}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </motion.div>
+                )}
 
                 <div className="bg-white border border-slate-200 rounded-2xl shadow-sm flex-1 overflow-hidden flex flex-col">
                   <div className="px-8 py-5 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
