@@ -522,7 +522,14 @@ export default function App() {
       });
 
       setSearchResults(results);
-      setSelectedCandidate(null);
+      
+      // 如果結果只有一個，則直接帶入資料
+      if (results.length === 1) {
+        selectCandidate(results[0]);
+      } else {
+        setSelectedCandidate(null);
+      }
+      
       setIsSearching(false);
     }, 300);
   };
@@ -715,16 +722,6 @@ export default function App() {
                   )}
                 </div>
 
-                {selectedCandidate.notes && (
-                  <motion.div initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} className="bg-indigo-50 border border-indigo-100 rounded-2xl p-6 shadow-sm">
-                    <h3 className="text-[10px] font-bold text-indigo-600 mb-2 flex items-center gap-2 uppercase tracking-widest">
-                      <MessageSquare className="w-4 h-4" /> 來自 GOOGLE_SHEET_ID 的備註
-                    </h3>
-                    <p className="text-sm font-medium text-slate-700 leading-relaxed italic">
-                      「{selectedCandidate.notes}」
-                    </p>
-                  </motion.div>
-                )}
 
                 {selectedCandidate.isResigned && selectedCandidate.resignations && selectedCandidate.resignations.length > 0 && (
                   <motion.div initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} className="bg-white border-2 border-red-100 rounded-2xl p-8 shadow-sm">
